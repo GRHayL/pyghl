@@ -29,6 +29,31 @@ GRHAYL_ROOT = _default_grhayl_root()
 BUILD_LIB_DIR = GRHAYL_ROOT / "build" / "lib"
 
 
+def _macos_rewrite_grhayl_load_paths(ext_path: Path, target_dir: Path) -> None:
+    if sys.platform != "darwin":
+        return
+
+    for lib_path in target_dir.glob("libghl*.dylib"):
+        subprocess.check_call(
+            ["install_name_tool", "-id", f"@rpath/{lib_path.name}", str(lib_path)]
+        )
+
+    otool = subprocess.check_output(["otool", "-L", str(ext_path)], text=True)
+    for line in otool.splitlines()[1:]:
+        load_path = line.strip().split(" ", 1)[0]
+        lib_name = Path(load_path).name
+        if lib_name.startswith("libghl") and lib_name.endswith(".dylib"):
+            subprocess.check_call(
+                [
+                    "install_name_tool",
+                    "-change",
+                    load_path,
+                    f"@rpath/{lib_name}",
+                    str(ext_path),
+                ]
+            )
+
+
 def _run_make_grhayl() -> None:
     makefile = GRHAYL_ROOT / "Makefile"
     build_dir = GRHAYL_ROOT / "build"
@@ -53,7 +78,7 @@ class BuildExt(build_ext):
         super().run()
 
         # For wheel/non-editable builds, ship libghl next to the extension so
-        # the extension can resolve it through $ORIGIN rpath.
+        # the extension can resolve it through the platform-local loader path.
         if not self.inplace:
             ext_path = Path(self.get_ext_fullpath("pyghl._pyghl")).resolve()
             target_dir = ext_path.parent
@@ -67,6 +92,7 @@ class BuildExt(build_ext):
                 src = BUILD_LIB_DIR / libname
                 if src.exists():
                     shutil.copy2(src, target_dir / libname)
+            _macos_rewrite_grhayl_load_paths(ext_path, target_dir)
 
 
 if sys.platform == "darwin":
