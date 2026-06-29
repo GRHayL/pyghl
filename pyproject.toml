@@ -1,0 +1,41 @@
+[build-system]
+requires = ["setuptools", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "pyghl"
+version = "0.1.0"
+description = "Python bindings for GRHayL (EOS-first preview)"
+readme = "README.md"
+requires-python = ">=3.9"
+license = "BSD-2-Clause"
+authors = [
+  { name = "GRHayL contributors" }
+]
+classifiers = [
+  "Programming Language :: Python :: 3",
+  "Programming Language :: C",
+  "Operating System :: POSIX :: Linux",
+  "Development Status :: 3 - Alpha"
+]
+
+[project.optional-dependencies]
+nn = [
+  "numpy",
+  "torch",
+  "h5py"
+]
+
+[project.scripts]
+pyghl-nn-train = "pyghl._nn_train:main"
+pyghl-nn-header-to-hdf5 = "pyghl.nn_c2p.header_to_hdf5:main"
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+include-package-data = true
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+pyghl = ["libghl*.so*", "nn_c2p/models/*.h5"]
