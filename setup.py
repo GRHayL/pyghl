@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import sys
 import shlex
 import shutil
 import subprocess
@@ -57,16 +58,27 @@ class BuildExt(build_ext):
             ext_path = Path(self.get_ext_fullpath("pyghl._pyghl")).resolve()
             target_dir = ext_path.parent
             target_dir.mkdir(parents=True, exist_ok=True)
-            for libname in ("libghl.so", "libghl_1.0.0.so"):
+            for libname in (
+                "libghl.so",
+                "libghl_1.0.0.so",
+                "libghl.dylib",
+                "libghl_1.0.0.dylib",
+            ):
                 src = BUILD_LIB_DIR / libname
                 if src.exists():
                     shutil.copy2(src, target_dir / libname)
 
 
-RPATH_ARGS = [
-    f"-Wl,-rpath,{BUILD_LIB_DIR}",
-    "-Wl,-rpath,$ORIGIN",
-]
+if sys.platform == "darwin":
+    RPATH_ARGS = [
+        f"-Wl,-rpath,{BUILD_LIB_DIR}",
+        "-Wl,-rpath,@loader_path",
+    ]
+else:
+    RPATH_ARGS = [
+        f"-Wl,-rpath,{BUILD_LIB_DIR}",
+        "-Wl,-rpath,$ORIGIN",
+    ]
 
 ext_modules = [
     Extension(

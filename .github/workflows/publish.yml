@@ -17,13 +17,10 @@ jobs:
       matrix:
         include:
           - name: linux-x86_64
-            os: ubuntu-24.04
-            cibw_archs: x86_64
-          - name: macos-x86_64
-            os: macos-13
+            os: ubuntu-26.04
             cibw_archs: x86_64
           - name: macos-arm64
-            os: macos-14
+            os: macos-26
             cibw_archs: arm64
 
     steps:
@@ -40,11 +37,15 @@ jobs:
           CIBW_MANYLINUX_X86_64_IMAGE: manylinux_2_28
           CIBW_BEFORE_ALL_LINUX: >
             if command -v dnf >/dev/null; then
-              dnf install -y hdf5-devel pkgconf-pkg-config;
+              dnf install -y hdf5-devel pkgconf-pkg-config zlib-devel libaec-devel;
             else
-              yum install -y hdf5-devel pkgconfig;
+              yum install -y hdf5-devel pkgconfig zlib-devel libaec-devel;
             fi
+          CIBW_ENVIRONMENT_LINUX: >
+            GRHAYL_CONFIGURE_ARGS="--hdf5inc=/usr/include --hdf5lib=/usr/lib64"
           CIBW_BEFORE_ALL_MACOS: "brew install hdf5 pkg-config"
+          CIBW_ENVIRONMENT_MACOS: >
+            GRHAYL_CONFIGURE_ARGS="--hdf5dir=/opt/homebrew/opt/hdf5"
           CIBW_BEFORE_BUILD_MACOS: "python -m pip install delocate"
           CIBW_REPAIR_WHEEL_COMMAND_MACOS: >
             delocate-wheel --require-archs {delocate_archs}

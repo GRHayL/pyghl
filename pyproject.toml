@@ -38,4 +38,4 @@ include-package-data = true
 where = ["src"]
 
 [tool.setuptools.package-data]
-pyghl = ["libghl*.so*", "nn_c2p/models/*.h5"]
+pyghl = ["libghl*.so*", "libghl*.dylib", "nn_c2p/models/*.h5"]
