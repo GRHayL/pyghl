@@ -47,6 +47,8 @@ typedef struct {
   ghl_con2prim_diagnostics diagnostics;
 } PyGHLDiagnostics;
 
+static PyObject *diagnostics_new(PyTypeObject *type, PyObject *args, PyObject *kwargs);
+
 static const char *ghl_error_name(const ghl_error_codes_t code) {
   switch(code) {
     case ghl_success:
@@ -940,46 +942,6 @@ DEFINE_BOOL_SETTER(
       PyGHLDiagnostics,
       diagnostics.speed_limited,
       "speed_limited")
-DEFINE_DOUBLE_GETTER(
-      diagnostics_get_x_exact,
-      PyGHLDiagnostics,
-      diagnostics.x_exact)
-DEFINE_DOUBLE_SETTER(
-      diagnostics_set_x_exact,
-      PyGHLDiagnostics,
-      diagnostics.x_exact,
-      "x_exact")
-DEFINE_DOUBLE_GETTER(diagnostics_get_T_exact, PyGHLDiagnostics, diagnostics.T_exact)
-DEFINE_DOUBLE_SETTER(
-      diagnostics_set_T_exact,
-      PyGHLDiagnostics,
-      diagnostics.T_exact,
-      "T_exact")
-
-static PyObject *diagnostics_get_n_eos_table_inversions(PyObject *self, void *closure) {
-  (void)closure;
-  return PyLong_FromLong(((PyGHLDiagnostics *)self)->diagnostics.n_eos_table_inversions);
-}
-
-static int diagnostics_set_n_eos_table_inversions(
-      PyObject *self,
-      PyObject *value,
-      void *closure) {
-  long parsed = 0;
-  (void)closure;
-  if(value == NULL) {
-    PyErr_SetString(PyExc_TypeError, "Cannot delete n_eos_table_inversions.");
-    return -1;
-  }
-  parsed = PyLong_AsLong(value);
-  if(PyErr_Occurred()) {
-    PyErr_SetString(PyExc_TypeError, "n_eos_table_inversions must be an integer.");
-    return -1;
-  }
-  ((PyGHLDiagnostics *)self)->diagnostics.n_eos_table_inversions = (int)parsed;
-  return 0;
-}
-
 static PyObject *diagnostics_get_which_routine(PyObject *self, void *closure) {
   (void)closure;
   return PyLong_FromLong(((PyGHLDiagnostics *)self)->diagnostics.which_routine);
@@ -997,7 +959,7 @@ static int diagnostics_set_which_routine(PyObject *self, PyObject *value, void *
     PyErr_SetString(PyExc_TypeError, "which_routine must be an integer.");
     return -1;
   }
-  ((PyGHLDiagnostics *)self)->diagnostics.which_routine = (ghl_con2prim_method_t)parsed;
+  ((PyGHLDiagnostics *)self)->diagnostics.which_routine = (ghl_con2prim_id_t)parsed;
   return 0;
 }
 
@@ -1038,12 +1000,10 @@ static PyObject *diagnostics_repr(PyObject *self) {
   snprintf(
         buffer,
         sizeof(buffer),
-        "Diagnostics(n_iter=%d, n_eos_table_inversions=%d, speed_limited=%s, x_exact=%g, T_exact=%g)",
+        "Diagnostics(n_iter=%d, speed_limited=%s, which_routine=%d)",
         diagnostics->diagnostics.n_iter,
-        diagnostics->diagnostics.n_eos_table_inversions,
         diagnostics->diagnostics.speed_limited ? "True" : "False",
-        diagnostics->diagnostics.x_exact,
-        diagnostics->diagnostics.T_exact);
+        diagnostics->diagnostics.which_routine);
   return PyUnicode_FromString(buffer);
 }
 
@@ -1066,17 +1026,6 @@ static PyGetSetDef diagnostics_getset[] = {
    NULL},
   {"backup", diagnostics_get_backup, NULL, "Tuple indicating backup usage.", NULL},
   {"n_iter", diagnostics_get_n_iter, diagnostics_set_n_iter, "Iteration count.", NULL},
-  {"n_eos_table_inversions",
-   diagnostics_get_n_eos_table_inversions,
-   diagnostics_set_n_eos_table_inversions,
-   "Number of EOS table inversions performed by the routine.",
-   NULL},
-  {"x_exact",
-   diagnostics_get_x_exact,
-   diagnostics_set_x_exact,
-   "Palenzuela x guess.",
-   NULL},
-  {"T_exact", diagnostics_get_T_exact, diagnostics_set_T_exact, "Exact temperature.", NULL},
   {NULL, NULL, NULL, NULL, NULL}
 };
 
@@ -1088,8 +1037,23 @@ static PyTypeObject PyGHLDiagnosticsType = {
   .tp_doc = "GRHayL con2prim diagnostics.",
   .tp_repr = diagnostics_repr,
   .tp_getset = diagnostics_getset,
-  .tp_new = PyType_GenericNew,
+  .tp_new = diagnostics_new,
 };
+
+static void initialize_py_diagnostics(PyGHLDiagnostics *diagnostics) {
+  memset(&diagnostics->diagnostics, 0, sizeof(diagnostics->diagnostics));
+  ghl_initialize_diagnostics(&diagnostics->diagnostics);
+}
+
+static PyObject *diagnostics_new(PyTypeObject *type, PyObject *args, PyObject *kwargs) {
+  (void)args;
+  (void)kwargs;
+  PyGHLDiagnostics *diagnostics = (PyGHLDiagnostics *)type->tp_alloc(type, 0);
+  if(diagnostics != NULL) {
+    initialize_py_diagnostics(diagnostics);
+  }
+  return (PyObject *)diagnostics;
+}
 
 static int require_type(PyObject *obj, PyTypeObject *type, const char *name) {
   if(PyObject_TypeCheck(obj, type)) {
@@ -1101,7 +1065,7 @@ static int require_type(PyObject *obj, PyTypeObject *type, const char *name) {
 
 static PyObject *py_initialize_params(PyObject *module, PyObject *args, PyObject *kwargs) {
   (void)module;
-  int main_routine = None;
+  int main_routine = ghl_con2prim_id_None;
   PyObject *backup_routine = Py_None;
   int evolve_entropy = 0;
   int evolve_temp = 1;
@@ -1137,7 +1101,10 @@ static PyObject *py_initialize_params(PyObject *module, PyObject *args, PyObject
     return NULL;
   }
 
-  ghl_con2prim_method_t backup_methods[3] = {None, None, None};
+  ghl_con2prim_id_t backup_methods[3] = {
+        ghl_con2prim_id_None,
+        ghl_con2prim_id_None,
+        ghl_con2prim_id_None};
   if(backup_routine != Py_None) {
     PyObject *sequence = PySequence_Fast(
           backup_routine,
@@ -1160,7 +1127,7 @@ static PyObject *py_initialize_params(PyObject *module, PyObject *args, PyObject
         Py_DECREF(sequence);
         return NULL;
       }
-      backup_methods[i] = (ghl_con2prim_method_t)value;
+      backup_methods[i] = (ghl_con2prim_id_t)value;
     }
     Py_DECREF(sequence);
   }
@@ -1172,7 +1139,7 @@ static PyObject *py_initialize_params(PyObject *module, PyObject *args, PyObject
   memset(&params->params, 0, sizeof(params->params));
 
   ghl_initialize_params(
-        (ghl_con2prim_method_t)main_routine,
+        (ghl_con2prim_id_t)main_routine,
         backup_methods,
         (bool)evolve_entropy,
         (bool)evolve_temp,
@@ -1392,8 +1359,7 @@ static PyObject *py_initialize_diagnostics(PyObject *module, PyObject *args) {
   if(diagnostics == NULL) {
     return NULL;
   }
-  memset(&diagnostics->diagnostics, 0, sizeof(diagnostics->diagnostics));
-  ghl_initialize_diagnostics(&diagnostics->diagnostics);
+  initialize_py_diagnostics(diagnostics);
   return (PyObject *)diagnostics;
 }
 
@@ -1622,8 +1588,7 @@ static PyObject *py_tabulated_Palenzuela1D_energy(PyObject *module, PyObject *ar
     if(diagnostics == NULL) {
       return NULL;
     }
-    memset(&diagnostics->diagnostics, 0, sizeof(diagnostics->diagnostics));
-    ghl_initialize_diagnostics(&diagnostics->diagnostics);
+    initialize_py_diagnostics(diagnostics);
     diagnostics_obj = (PyObject *)diagnostics;
     created_diagnostics = 1;
   }
@@ -1695,8 +1660,7 @@ static PyObject *py_tabulated_con2prim_multi_method(PyObject *module, PyObject *
     if(diagnostics == NULL) {
       return NULL;
     }
-    memset(&diagnostics->diagnostics, 0, sizeof(diagnostics->diagnostics));
-    ghl_initialize_diagnostics(&diagnostics->diagnostics);
+    initialize_py_diagnostics(diagnostics);
     diagnostics_obj = (PyObject *)diagnostics;
     created_diagnostics = 1;
   }
@@ -1869,19 +1833,36 @@ PyMODINIT_FUNC PyInit__pyghl(void) {
   Py_INCREF(&PyGHLDiagnosticsType);
   PyModule_AddObject(module, "Diagnostics", (PyObject *)&PyGHLDiagnosticsType);
 
-  if(PyModule_AddIntConstant(module, "C2P_NONE", None) < 0
-     || PyModule_AddIntConstant(module, "C2P_NOBLE2D", Noble2D) < 0
-     || PyModule_AddIntConstant(module, "C2P_NOBLE1D", Noble1D) < 0
-     || PyModule_AddIntConstant(module, "C2P_NOBLE1D_ENTROPY", Noble1D_entropy) < 0
-     || PyModule_AddIntConstant(module, "C2P_NOBLE1D_ENTROPY2", Noble1D_entropy2) < 0
-     || PyModule_AddIntConstant(module, "C2P_FONT1D", Font1D) < 0
-     || PyModule_AddIntConstant(module, "C2P_CERDADURAN2D", CerdaDuran2D) < 0
-     || PyModule_AddIntConstant(module, "C2P_CERDADURAN3D", CerdaDuran3D) < 0
-     || PyModule_AddIntConstant(module, "C2P_PALENZUELA1D", Palenzuela1D) < 0
-     || PyModule_AddIntConstant(module, "C2P_PALENZUELA1D_ENTROPY", Palenzuela1D_entropy)
+  if(PyModule_AddIntConstant(module, "C2P_NONE", ghl_con2prim_id_None) < 0
+     || PyModule_AddIntConstant(module, "C2P_NOBLE2D", ghl_con2prim_id_Noble2D) < 0
+     || PyModule_AddIntConstant(module, "C2P_NOBLE1D", ghl_con2prim_id_Noble1D) < 0
+     || PyModule_AddIntConstant(
+              module,
+              "C2P_NOBLE1D_ENTROPY",
+              ghl_con2prim_id_Noble1D_entropy)
            < 0
-     || PyModule_AddIntConstant(module, "C2P_NEWMAN1D", Newman1D) < 0
-     || PyModule_AddIntConstant(module, "C2P_NEWMAN1D_ENTROPY", Newman1D_entropy) < 0) {
+     || PyModule_AddIntConstant(
+              module,
+              "C2P_NOBLE1D_ENTROPY2",
+              ghl_con2prim_id_Noble1D_entropy2)
+           < 0
+     || PyModule_AddIntConstant(module, "C2P_FONT1D", ghl_con2prim_id_Font1D) < 0
+     || PyModule_AddIntConstant(
+              module,
+              "C2P_PALENZUELA1D",
+              ghl_con2prim_id_Palenzuela1D)
+           < 0
+     || PyModule_AddIntConstant(
+              module,
+              "C2P_PALENZUELA1D_ENTROPY",
+              ghl_con2prim_id_Palenzuela1D_entropy)
+           < 0
+     || PyModule_AddIntConstant(module, "C2P_NEWMAN1D", ghl_con2prim_id_Newman1D) < 0
+     || PyModule_AddIntConstant(
+              module,
+              "C2P_NEWMAN1D_ENTROPY",
+              ghl_con2prim_id_Newman1D_entropy)
+           < 0) {
     Py_DECREF(module);
     return NULL;
   }

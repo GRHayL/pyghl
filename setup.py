@@ -30,7 +30,8 @@ BUILD_LIB_DIR = GRHAYL_ROOT / "build" / "lib"
 
 def _run_make_grhayl() -> None:
     makefile = GRHAYL_ROOT / "Makefile"
-    if not makefile.exists():
+    build_dir = GRHAYL_ROOT / "build"
+    if not makefile.exists() or not build_dir.exists():
         configure = GRHAYL_ROOT / "configure"
         if not configure.exists():
             raise RuntimeError(
@@ -38,6 +39,8 @@ def _run_make_grhayl() -> None:
                 "or set GRHAYL_DIR to a configured GRHayL checkout."
             )
         configure_args = ["--prefix=."]
+        if makefile.exists():
+            configure_args.append("--reconfigure")
         configure_args.extend(shlex.split(os.environ.get("GRHAYL_CONFIGURE_ARGS", "")))
         subprocess.check_call([str(configure), *configure_args], cwd=GRHAYL_ROOT)
     subprocess.check_call(["make", "-C", str(GRHAYL_ROOT), "grhayl"])

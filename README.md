@@ -65,16 +65,10 @@ Initialize the pinned GRHayL source:
 git submodule update --init --recursive
 ```
 
-Standard:
+Install:
 
 ```bash
 python3 -m pip install -e .
-```
-
-With neural-network training helpers:
-
-```bash
-python3 -m pip install -e '.[nn]'
 ```
 
 Offline or restricted-network environments:
@@ -131,6 +125,9 @@ The following example scripts mirror the C generators in
 
 The same tools are also importable/runnable as package modules:
 
+- `pyghl train <eos-file> [dataset] ...`
+- `pyghl append-eos <eos-file> [nn-hdf5] ...`
+
 - `python -m pyghl.nn_c2p.nn_c2p_generate_dataset ...`
 - `python -m pyghl.nn_c2p.nn_c2p_train ...`
 - `python -m pyghl.nn_c2p.nn_c2p_test ...`
@@ -154,18 +151,18 @@ python3 -m pyghl.nn_c2p.nn_c2p_generate_dataset \
   Unit_Tests/sample_table/Hempel_SFHoEOS_rho222_temp180_ye60_version_1.1_20120817_simple.h5 \
   train
 
-python3 -m pyghl.nn_c2p.nn_c2p_train \
+pyghl train \
   Unit_Tests/sample_table/Hempel_SFHoEOS_rho222_temp180_ye60_version_1.1_20120817_simple.h5
 
-python3 -m pyghl.nn_c2p.nn_c2p_train \
+pyghl train \
   Unit_Tests/sample_table/Hempel_SFHoEOS_rho222_temp180_ye60_version_1.1_20120817_simple.h5 \
   /tmp/nn_training_dataset.bin
 
-python3 -m pyghl.nn_c2p.append_eos_file \
+pyghl append-eos \
   Unit_Tests/sample_table/Hempel_SFHoEOS_rho222_temp180_ye60_version_1.1_20120817_simple.h5 \
   /tmp/tiny_mlp_model.h5
 
-python3 -m pyghl.nn_c2p.append_eos_file \
+pyghl append-eos \
   Unit_Tests/sample_table/Hempel_SFHoEOS_rho222_temp180_ye60_version_1.1_20120817_simple.h5
 
 python3 -m pyghl.nn_c2p.list_installed_models

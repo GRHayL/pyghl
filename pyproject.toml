@@ -12,6 +12,11 @@ license = "BSD-2-Clause"
 authors = [
   { name = "GRHayL contributors" }
 ]
+dependencies = [
+  "numpy",
+  "torch",
+  "h5py"
+]
 classifiers = [
   "Programming Language :: Python :: 3",
   "Programming Language :: C",
@@ -19,15 +24,10 @@ classifiers = [
   "Development Status :: 3 - Alpha"
 ]
 
-[project.optional-dependencies]
-nn = [
-  "numpy",
-  "torch",
-  "h5py"
-]
-
 [project.scripts]
-pyghl-nn-train = "pyghl._nn_train:main"
+pyghl = "pyghl.cli:main"
+pyghl-nn-train = "pyghl.nn_c2p.nn_c2p_train:main"
+pyghl-append-eos = "pyghl.nn_c2p.append_eos_file:main"
 pyghl-nn-header-to-hdf5 = "pyghl.nn_c2p.header_to_hdf5:main"
 
 [tool.setuptools]

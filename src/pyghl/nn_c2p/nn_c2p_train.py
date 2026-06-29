@@ -11,8 +11,8 @@ import pyghl as ghl
 from .nn_c2p_generate_dataset import generate_dataset
 
 
-def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser()
+def build_parser(prog: str | None = None) -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(prog=prog)
     parser.add_argument("eos_file", type=Path)
     parser.add_argument("dataset", nargs="?", type=Path)
     parser.add_argument("--checkpoint")
@@ -49,8 +49,8 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def main() -> int:
-    args = build_parser().parse_args()
+def main(argv: list[str] | None = None, prog: str | None = None) -> int:
+    args = build_parser(prog=prog).parse_args(argv)
     append_to_eos = args.append_eos == "yes"
     register_installed_model = args.register_installed_model == "yes"
     eos_name = args.eos_name

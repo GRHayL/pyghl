@@ -6,8 +6,9 @@ from pathlib import Path
 import pyghl as ghl
 
 
-def build_parser() -> argparse.ArgumentParser:
+def build_parser(prog: str | None = None) -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
+        prog=prog,
         description="Append a GRHayL nn_c2p HDF5 model into an EOS HDF5 file."
     )
     parser.add_argument("eos_hdf5", type=Path)
@@ -25,8 +26,8 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def main() -> int:
-    args = build_parser().parse_args()
+def main(argv: list[str] | None = None, prog: str | None = None) -> int:
+    args = build_parser(prog=prog).parse_args(argv)
     existing = ghl.nn.eos_nn_metadata(args.eos_hdf5)
     if existing["contains_nn"]:
         print(
@@ -51,9 +52,9 @@ def main() -> int:
             raise SystemExit(
                 f"{exc}\n"
                 "Train a neural network for this EOS with:\n"
-                f"  python -m pyghl.nn_c2p.nn_c2p_train {args.eos_hdf5}\n"
+                f"  pyghl train {args.eos_hdf5}\n"
                 "Or, if you already have a dataset:\n"
-                f"  python -m pyghl.nn_c2p.nn_c2p_train {args.eos_hdf5} nn_training_dataset.bin"
+                f"  pyghl train {args.eos_hdf5} nn_training_dataset.bin"
             ) from exc
         model_desc = "the installed matching neural-network model"
     else:

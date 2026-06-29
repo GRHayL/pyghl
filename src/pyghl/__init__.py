@@ -8,8 +8,6 @@ _BINDINGS_AVAILABLE = False
 try:
     from ._pyghl import (
         ADMAux,
-        C2P_CERDADURAN2D,
-        C2P_CERDADURAN3D,
         C2P_FONT1D,
         C2P_NEWMAN1D,
         C2P_NEWMAN1D_ENTROPY,
@@ -67,8 +65,6 @@ __all__ = [
 if _BINDINGS_AVAILABLE:
     __all__ += [
         "ADMAux",
-        "C2P_CERDADURAN2D",
-        "C2P_CERDADURAN3D",
         "C2P_FONT1D",
         "C2P_NEWMAN1D",
         "C2P_NEWMAN1D_ENTROPY",
