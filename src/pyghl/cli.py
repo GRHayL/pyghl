@@ -2,11 +2,25 @@ from __future__ import annotations
 
 import argparse
 from collections.abc import Sequence
+from importlib.metadata import PackageNotFoundError, version
 import sys
+
+
+def _package_version() -> str:
+    try:
+        return version("pyghl")
+    except PackageNotFoundError:
+        return "unknown"
 
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="pyghl")
+    parser.add_argument(
+        "-v",
+        "--version",
+        action="store_true",
+        help="Show version and exit.",
+    )
     subparsers = parser.add_subparsers(dest="command", metavar="command")
 
     train = subparsers.add_parser(
@@ -40,6 +54,10 @@ def main(argv: Sequence[str] | None = None) -> int:
     if not argv or argv[0] in ("-h", "--help"):
         parser.print_help()
         return 0 if argv else 2
+
+    if argv[0] in ("-v", "--version"):
+        print(f"pyghl {_package_version()}")
+        return 0
 
     command = argv[0]
     command_args = argv[1:]
