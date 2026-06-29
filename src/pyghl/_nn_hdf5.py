@@ -394,27 +394,21 @@ def remove_nn_from_eos_file(eos_path: str | Path) -> dict[str, Any]:
     }
 
 
-def _sanitize_eos_name(name: str) -> str:
-    cleaned = re.sub(r"[^A-Za-z0-9._-]+", "_", name.strip())
-    cleaned = cleaned.strip("._-")
-    if not cleaned:
-        raise ValueError("EOS name must contain at least one alphanumeric character.")
-    return cleaned
-
-
 def install_nn_model(
     nn_hdf5_path: str | Path,
     *,
-    eos_name: str,
     overwrite: bool = False,
 ) -> Path:
     src = Path(nn_hdf5_path)
     if not src.is_file():
         raise FileNotFoundError(f"NN model file not found: {src!s}")
-    sanitized = _sanitize_eos_name(eos_name)
+    source_eos = read_nn_hdf5_payload(src).get("source_eos", {})
+    eos_md5 = _decode_hdf5_scalar(source_eos.get("canonical_md5", ""))
+    if not re.fullmatch(r"[0-9a-f]{32}", eos_md5):
+        raise ValueError(f"Could not find source EOS canonical md5 in {src!s}.")
     models_dir = installed_nn_models_dir()
     models_dir.mkdir(parents=True, exist_ok=True)
-    dest = models_dir / f"{sanitized}.h5"
+    dest = models_dir / f"{eos_md5}.h5"
     if dest.exists() and not overwrite:
         raise ValueError(
             f"Installed model {dest.name} already exists; rerun with overwrite=True to replace it."

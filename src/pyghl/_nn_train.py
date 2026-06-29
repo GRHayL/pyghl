@@ -2070,7 +2070,6 @@ def train_on_dataset(
     append_to_eos: bool = True,
     overwrite_eos_nn: bool = False,
     register_installed_model: bool = True,
-    installed_eos_name: str | None = None,
     overwrite_installed_model: bool = False,
     matmul_precision: str = "high",
     **train_kwargs,
@@ -2151,11 +2150,9 @@ def train_on_dataset(
                 f"added_utc={summary.get('embedded_utc', 'unknown')}"
             )
         if register_installed_model and eos_path is not None:
-            eos_name = installed_eos_name or Path(eos_path).stem
             try:
                 installed_path = install_nn_model(
                     hdf5_path,
-                    eos_name=eos_name,
                     overwrite=overwrite_installed_model,
                 )
                 print(f"Registered installed NN model: {installed_path}")
@@ -2187,7 +2184,6 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--append_eos", choices=("yes", "no"), default="yes")
     parser.add_argument("--overwrite_eos", action="store_true")
-    parser.add_argument("--eos_name")
     parser.add_argument("--register_installed_model", choices=("yes", "no"), default="yes")
     parser.add_argument("--overwrite_installed_model", action="store_true")
     parser.add_argument("--dataset_n_pts", type=int, default=16)
@@ -2245,7 +2241,6 @@ def main() -> int:
             append_to_eos=append_to_eos,
             overwrite_eos_nn=args.overwrite_eos,
             register_installed_model=register_installed_model,
-            installed_eos_name=args.eos_name,
             overwrite_installed_model=args.overwrite_installed_model,
             hidden_dim=args.hidden_dim,
             n_hidden=args.n_hidden,
