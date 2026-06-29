@@ -1,99 +1,114 @@
 # pyghl
 
-This directory contains Python bindings for GRHayL, including enough tabulated-EOS
-and con2prim functionality to reproduce the neural-network dataset/testing
-generators in `Unit_Tests/data_gen`.
+Python bindings and neural-network tooling for
+[GRHayL](https://github.com/GRHayL/GRHayL).
 
-## What is included
+`pyghl` packages a pinned GRHayL build together with a CPython extension and
+Python utilities for tabulated equations of state, conservative-to-primitive
+experiments, and neural-network initial guesses.
 
-- `pyghl.initialize_params(...)`
-- `pyghl.initialize_metric(...)`
-- `pyghl.compute_ADM_auxiliaries(...)`
-- `pyghl.initialize_primitives(...)`
-- `pyghl.initialize_diagnostics(...)`
-- `pyghl.compute_conservs(...)`
-- `pyghl.undensitize_conservatives(...)`
-- `pyghl.compute_SU_Bsq_Ssq_BdotS(...)`
-- `pyghl.limit_v_and_compute_u0(...)`
-- `pyghl.limit_utilde_and_compute_v(...)`
-- `pyghl.guess_primitives(...)`
-- `pyghl.tabulated_Palenzuela1D_energy(...)`
-- `pyghl.nn_c2p_guess(eos, ...)`
-- `pyghl.nn_c2p_guess_x(eos, ...)`
-- Struct wrappers:
-  - `pyghl.Primitive`
-  - `pyghl.Conservative`
-  - `pyghl.Metric`
-  - `pyghl.ADMAux`
-  - `pyghl.Diagnostics`
-- `pyghl.eos.initialize_tabulated_eos_functions_and_params(...)`
-- `pyghl.nn` helpers:
-  - `flat_metric()`
-  - `guess(eos, ...)`
-  - `guess_x(eos, ...)`
-  - `nn_initial_guess(...)`
-  - `iter_dataset_points(...)`
-  - `read_training_dataset(...)`
-  - `train_regressor(...)`
-  - `train_on_dataset(...)`
-  - `save_inference_bundle(...)`
-  - `load_inference_bundle(...)`
-  - `export_to_c_header(...)`
-- `TabulatedEOS` methods:
-  - `tabulated_enforce_bounds_rho_Ye_T`
-  - `tabulated_enforce_bounds_rho_Ye_eps`
-  - `tabulated_compute_P_from_T`
-  - `tabulated_compute_eps_from_T`
-  - `tabulated_compute_cs2_from_T`
-  - `tabulated_compute_P_eps_from_T`
-  - `tabulated_compute_P_eps_S_from_T`
-  - `tabulated_compute_T_from_eps`
-  - `tabulated_compute_P_T_from_eps`
+> **Warning**
+>
+> While revised by humans, the majority of the code in this repository has
+> leveraged AI assistance. Users should review results carefully and use this
+> package at their own risk.
 
-## Build requirements
+At a high level:
 
-- The pinned GRHayL submodule initialized at `extern/GRHayL`, or `GRHAYL_DIR`
-  set to a configured GRHayL checkout.
-- HDF5 enabled in GRHayL build.
-- Python build tooling (`pip`, `setuptools`, compiler toolchain).
+- `pyghl` exposes selected GRHayL C structs and routines to Python.
+- `pyghl.eos` provides tabulated-EOS loading and interpolation helpers.
+- `pyghl.nn` provides neural-network con2prim data, training, export, and EOS
+  embedding helpers.
+- `pyghl train` trains a neural-network model for an EOS table.
+- `pyghl append-eos` embeds a trained model into an EOS HDF5 file.
 
-## Install (from repo root)
+## Installation
 
-Initialize the pinned GRHayL source:
+For end users installing from PyPI:
 
 ```bash
+python -m pip install pyghl
+```
+
+Check the installed package:
+
+```bash
+pyghl --version
+```
+
+For contributors working from a clone of this repository:
+
+```bash
+git clone https://github.com/GRHayL/pyghl.git
+cd pyghl
 git submodule update --init --recursive
+python -m pip install -e .
 ```
 
-Install:
+The local build compiles the pinned GRHayL submodule in `extern/GRHayL` and then
+builds the Python extension against the resulting `libghl`.
+
+If you need to build against a different local GRHayL checkout:
 
 ```bash
-python3 -m pip install -e .
+GRHAYL_DIR=/path/to/GRHayL python -m pip install -e .
 ```
 
-Offline or restricted-network environments:
+## Prerequisites by Workflow
+
+`python -m pip install pyghl` should install a prebuilt wheel on supported
+platforms. Source builds need additional system tools:
+
+- Local extension builds: a C compiler, `make`, HDF5, and Python build tooling.
+- Editable contributor installs: initialized `extern/GRHayL` submodule.
+- Neural-network training: `torch`, `numpy`, and `h5py` from package
+  dependencies.
+- EOS workflows: a GRHayL-compatible tabulated EOS HDF5 file.
+
+Current CI builds wheels for Linux x86_64 and macOS arm64.
+
+## First Successful Run
+
+The quickest useful workflow is to train a small model for an EOS table and
+append the result back into that EOS file.
+
+### 1. Train a model
 
 ```bash
-python3 -m pip install --no-build-isolation -e .
+pyghl train path/to/eos_table.h5
 ```
 
-The build step runs:
+This creates training data if no dataset is supplied, trains a small neural
+network, writes model artifacts such as `tiny_mlp_model.h5`, and registers the
+installed model by the EOS canonical MD5 hash.
+
+To train from an existing dataset:
 
 ```bash
-make -C extern/GRHayL grhayl
+pyghl train path/to/eos_table.h5 path/to/nn_training_dataset.bin
 ```
 
-and then compiles the Python extension against `extern/GRHayL/build/lib/libghl.so`.
-Set `GRHAYL_DIR=/path/to/GRHayL` to build against a different local checkout.
+### 2. Append a model to an EOS file
 
-If editable install is not available in your environment, you can work from the
-repository root with:
+Append an explicit model:
 
 ```bash
-PYTHONPATH=src python3 ...
+pyghl append-eos path/to/eos_table.h5 tiny_mlp_model.h5
 ```
 
-## Example
+Or append the installed model matching the EOS canonical MD5 hash:
+
+```bash
+pyghl append-eos path/to/eos_table.h5
+```
+
+### 3. Inspect installed models
+
+```bash
+python -m pyghl.nn_c2p.list_installed_models
+```
+
+## Python API Example
 
 ```python
 import pyghl as ghl
@@ -101,75 +116,99 @@ import pyghl as ghl
 params = ghl.initialize_params()
 eos = ghl.eos.initialize_tabulated_eos_functions_and_params(
     params,
-    "Unit_Tests/sample_table/Hempel_SFHoEOS_rho222_temp180_ye60_version_1.1_20120817_simple.h5",
+    "path/to/eos_table.h5",
 )
 
-rho = 1e-12
+rho = 1.0e-12
 Y_e = 0.05
-T = 1e2
+T = 1.0e2
 
 rho, Y_e, T = eos.tabulated_enforce_bounds_rho_Ye_T(rho, Y_e, T)
-P = eos.tabulated_compute_P_from_T(rho, Y_e, T)
+pressure = eos.tabulated_compute_P_from_T(rho, Y_e, T)
+print(pressure)
 ```
 
-You can also pass a short table name and set `GRHAYL_EOS_TABLE_DIR`.
+## Command-Line Tools
 
-## Neural-network data generators
-
-The following example scripts mirror the C generators in
-`Unit_Tests/data_gen`:
-
-- `examples/nn_c2p_generate_dataset.py`
-- `examples/nn_c2p_test.py`
-- `examples/nn_c2p_train.py`
-
-The same tools are also importable/runnable as package modules:
-
-- `pyghl train <eos-file> [dataset] ...`
-- `pyghl append-eos <eos-file> [nn-hdf5] ...`
-
-- `python -m pyghl.nn_c2p.nn_c2p_generate_dataset ...`
-- `python -m pyghl.nn_c2p.nn_c2p_train ...`
-- `python -m pyghl.nn_c2p.nn_c2p_test ...`
-- `python -m pyghl.nn_c2p.append_eos_file ...`
-- `python -m pyghl.nn_c2p.check_eos ...`
-- `python -m pyghl.nn_c2p.list_installed_models`
-- `python -m pyghl.nn_c2p.remove_eos_nn ...`
-
-Example:
+Primary commands:
 
 ```bash
-PYTHONPATH=src python3 examples/nn_c2p_generate_dataset.py \
-  Unit_Tests/sample_table/Hempel_SFHoEOS_rho222_temp180_ye60_version_1.1_20120817_simple.h5 \
-  train --n-pts 2 --output /tmp/nn_training_dataset.bin
+pyghl train <eos-file> [dataset]
+pyghl append-eos <eos-file> [nn-hdf5]
+pyghl --version
+```
 
-PYTHONPATH=src python3 examples/nn_c2p_test.py \
-  Unit_Tests/sample_table/Hempel_SFHoEOS_rho222_temp180_ye60_version_1.1_20120817_simple.h5 \
-  /tmp/nn_training_dataset.bin --limit 8
+Additional module entry points:
 
-python3 -m pyghl.nn_c2p.nn_c2p_generate_dataset \
-  Unit_Tests/sample_table/Hempel_SFHoEOS_rho222_temp180_ye60_version_1.1_20120817_simple.h5 \
-  train
+```bash
+python -m pyghl.nn_c2p.nn_c2p_generate_dataset ...
+python -m pyghl.nn_c2p.nn_c2p_train ...
+python -m pyghl.nn_c2p.nn_c2p_test ...
+python -m pyghl.nn_c2p.append_eos_file ...
+python -m pyghl.nn_c2p.check_eos ...
+python -m pyghl.nn_c2p.list_installed_models
+python -m pyghl.nn_c2p.remove_eos_nn ...
+```
 
-pyghl train \
-  Unit_Tests/sample_table/Hempel_SFHoEOS_rho222_temp180_ye60_version_1.1_20120817_simple.h5
+## What Is Exposed?
 
-pyghl train \
-  Unit_Tests/sample_table/Hempel_SFHoEOS_rho222_temp180_ye60_version_1.1_20120817_simple.h5 \
-  /tmp/nn_training_dataset.bin
+Selected top-level bindings include:
 
-pyghl append-eos \
-  Unit_Tests/sample_table/Hempel_SFHoEOS_rho222_temp180_ye60_version_1.1_20120817_simple.h5 \
-  /tmp/tiny_mlp_model.h5
+- `initialize_params`
+- `initialize_metric`
+- `compute_ADM_auxiliaries`
+- `initialize_primitives`
+- `initialize_diagnostics`
+- `compute_conservs`
+- `undensitize_conservatives`
+- `compute_SU_Bsq_Ssq_BdotS`
+- `limit_v_and_compute_u0`
+- `limit_utilde_and_compute_v`
+- `guess_primitives`
+- `tabulated_Palenzuela1D_energy`
+- `tabulated_con2prim_multi_method`
+- `nn_c2p_guess`
+- `nn_c2p_guess_x`
 
-pyghl append-eos \
-  Unit_Tests/sample_table/Hempel_SFHoEOS_rho222_temp180_ye60_version_1.1_20120817_simple.h5
+Struct wrappers include:
 
-python3 -m pyghl.nn_c2p.list_installed_models
+- `Primitive`
+- `Conservative`
+- `Metric`
+- `ADMAux`
+- `Diagnostics`
+- `Params`
+- `TabulatedEOS`
 
-python3 -m pyghl.nn_c2p.check_eos \
-  Unit_Tests/sample_table/Hempel_SFHoEOS_rho222_temp180_ye60_version_1.1_20120817_simple.h5
+## Repository Map
 
-python3 -m pyghl.nn_c2p.remove_eos_nn \
-  Unit_Tests/sample_table/Hempel_SFHoEOS_rho222_temp180_ye60_version_1.1_20120817_simple.h5
+- `csrc/`: CPython extension source.
+- `src/pyghl/`: Python package.
+- `src/pyghl/nn_c2p/`: command-line neural-network workflows.
+- `examples/`: direct example scripts.
+- `extern/GRHayL/`: pinned GRHayL submodule used for builds.
+- `.github/workflows/`: wheel and PyPI publishing automation.
+- `PUBLISHING.md`: release and PyPI publishing checklist.
+
+## Contributor Setup
+
+Recommended local workflow:
+
+```bash
+git submodule update --init --recursive
+python -m pip install -e .
+python -m compileall -q src setup.py
+```
+
+Build a local wheel:
+
+```bash
+python -m pip wheel . -w /tmp/pyghl-wheel --no-deps --no-build-isolation
+```
+
+If editable installs are not available in your environment, many Python-only
+checks can be run from the repository root with:
+
+```bash
+PYTHONPATH=src python -m pyghl.nn_c2p.list_installed_models
 ```
