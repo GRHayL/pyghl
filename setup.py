@@ -73,6 +73,12 @@ def _run_make_grhayl() -> None:
 
 
 class BuildExt(build_ext):
+    def build_extension(self, ext: Extension) -> None:
+        ext.extra_link_args = [_loader_rpath_arg()]
+        if self.inplace:
+            ext.extra_link_args.insert(0, f"-Wl,-rpath,{BUILD_LIB_DIR}")
+        super().build_extension(ext)
+
     def run(self) -> None:
         _run_make_grhayl()
         super().run()
@@ -95,16 +101,10 @@ class BuildExt(build_ext):
             _macos_rewrite_grhayl_load_paths(ext_path, target_dir)
 
 
-if sys.platform == "darwin":
-    RPATH_ARGS = [
-        f"-Wl,-rpath,{BUILD_LIB_DIR}",
-        "-Wl,-rpath,@loader_path",
-    ]
-else:
-    RPATH_ARGS = [
-        f"-Wl,-rpath,{BUILD_LIB_DIR}",
-        "-Wl,-rpath,$ORIGIN",
-    ]
+def _loader_rpath_arg() -> str:
+    if sys.platform == "darwin":
+        return "-Wl,-rpath,@loader_path"
+    return "-Wl,-rpath,$ORIGIN"
 
 ext_modules = [
     Extension(
@@ -117,7 +117,7 @@ ext_modules = [
         library_dirs=[str(BUILD_LIB_DIR)],
         libraries=["ghl"],
         extra_compile_args=["-std=c99"],
-        extra_link_args=RPATH_ARGS,
+        extra_link_args=[],
     )
 ]
 

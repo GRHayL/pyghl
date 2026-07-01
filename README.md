@@ -20,7 +20,7 @@ At a high level:
 - `pyghl.nn` provides neural-network con2prim data, training, export, and EOS
   embedding helpers.
 - `pyghl train` trains a neural-network model for an EOS table.
-- `pyghl append-eos` embeds a trained model into an EOS HDF5 file.
+- `pyghl append` embeds a trained model into an EOS HDF5 file.
 
 ## Installation
 
@@ -67,20 +67,32 @@ platforms. Source builds need additional system tools:
 
 Current CI builds wheels for Linux x86_64 and macOS arm64.
 
-## First Successful Run
+## Basic EOS Neural-Network Workflow
 
-The quickest useful workflow is to train a small model for an EOS table and
-append the result back into that EOS file.
+The quickest useful workflow is to make sure the EOS file itself contains the
+neural-network data that GRHayL loads when `enable_neural_net_c2p=True`.
 
-### 1. Train a model
+### 1. Try the installed model cache first
+
+```bash
+pyghl append path/to/eos_table.h5
+```
+
+This looks for an installed neural-network model whose recorded EOS hash matches
+the EOS file, then embeds it into the EOS under the `grhayl_nn_c2p` group. This
+is the preferred first command because it is fast and avoids retraining known
+EOS tables.
+
+### 2. Train if the EOS is unknown
 
 ```bash
 pyghl train path/to/eos_table.h5
 ```
 
-This creates training data if no dataset is supplied, trains a small neural
-network, writes model artifacts such as `tiny_mlp_model.h5`, and registers the
-installed model by the EOS canonical MD5 hash.
+If no installed model matches, `pyghl train` creates training data when no
+dataset is supplied, trains a small neural network, writes model artifacts such
+as `tiny_mlp_model.h5`, registers the model by the EOS canonical MD5 hash, and
+embeds the result into the EOS file by default.
 
 To train from an existing dataset:
 
@@ -88,24 +100,40 @@ To train from an existing dataset:
 pyghl train path/to/eos_table.h5 path/to/nn_training_dataset.bin
 ```
 
-### 2. Append a model to an EOS file
-
-Append an explicit model:
+### 3. Retrain a known EOS deliberately
 
 ```bash
-pyghl append-eos path/to/eos_table.h5 tiny_mlp_model.h5
+pyghl train path/to/eos_table.h5 --force_retrain
 ```
 
-Or append the installed model matching the EOS canonical MD5 hash:
+Use this when the EOS is already known but you want to replace the installed
+model artifacts with a fresh training run. If the EOS already contains embedded
+neural-network data and you want to replace it too, add `--overwrite_eos`.
+
+### Other Useful Commands
+
+Inspect whether an EOS file already contains embedded neural-network data:
 
 ```bash
-pyghl append-eos path/to/eos_table.h5
+pyghl check-eos path/to/eos_table.h5
 ```
 
-### 3. Inspect installed models
+List installed models that can be matched by EOS hash:
 
 ```bash
-python -m pyghl.nn_c2p.list_installed_models
+pyghl list-models
+```
+
+Append a specific model file instead of using the installed model cache:
+
+```bash
+pyghl append path/to/eos_table.h5 path/to/tiny_mlp_model.h5
+```
+
+Remove embedded neural-network data from an EOS file:
+
+```bash
+pyghl remove-eos-nn path/to/eos_table.h5
 ```
 
 ## Python API Example
@@ -134,20 +162,11 @@ Primary commands:
 
 ```bash
 pyghl train <eos-file> [dataset]
-pyghl append-eos <eos-file> [nn-hdf5]
+pyghl append <eos-file> [nn-hdf5]
+pyghl check-eos <eos-file>
+pyghl list-models
+pyghl remove-eos-nn <eos-file>
 pyghl --version
-```
-
-Additional module entry points:
-
-```bash
-python -m pyghl.nn_c2p.nn_c2p_generate_dataset ...
-python -m pyghl.nn_c2p.nn_c2p_train ...
-python -m pyghl.nn_c2p.nn_c2p_test ...
-python -m pyghl.nn_c2p.append_eos_file ...
-python -m pyghl.nn_c2p.check_eos ...
-python -m pyghl.nn_c2p.list_installed_models
-python -m pyghl.nn_c2p.remove_eos_nn ...
 ```
 
 ## What Is Exposed?
@@ -204,11 +223,4 @@ Build a local wheel:
 
 ```bash
 python -m pip wheel . -w /tmp/pyghl-wheel --no-deps --no-build-isolation
-```
-
-If editable installs are not available in your environment, many Python-only
-checks can be run from the repository root with:
-
-```bash
-PYTHONPATH=src python -m pyghl.nn_c2p.list_installed_models
 ```

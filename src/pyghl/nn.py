@@ -4,9 +4,10 @@ import math
 import struct
 from dataclasses import dataclass
 from pathlib import Path
-from typing import BinaryIO, Iterator
+from typing import TYPE_CHECKING, BinaryIO, Iterator
 
-from . import _pyghl
+if TYPE_CHECKING:
+    from . import _pyghl
 
 
 @dataclass(frozen=True)
@@ -43,6 +44,7 @@ class NNGuess:
 
 
 def guess(eos: _pyghl.TabulatedEOS, q: float, r: float, s: float, t: float) -> NNGuess:
+    _pyghl = _require_pyghl()
     x = _pyghl.nn_c2p_guess(eos, float(q), float(r), float(s), float(t))
     return NNGuess(x=float(x))
 
@@ -52,6 +54,7 @@ def guess_x(eos: _pyghl.TabulatedEOS, q: float, r: float, s: float, t: float) ->
 
 
 def flat_metric() -> tuple[_pyghl.Metric, _pyghl.ADMAux]:
+    _pyghl = _require_pyghl()
     metric = _pyghl.initialize_metric(1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 1.0, 0.0, 1.0)
     return metric, _pyghl.compute_ADM_auxiliaries(metric)
 
@@ -63,6 +66,7 @@ def nn_initial_guess(
     cons_undens: _pyghl.Conservative,
     prims: _pyghl.Primitive,
 ) -> float:
+    _pyghl = _require_pyghl()
     SU, B_squared, S_squared, BdotS = _pyghl.compute_SU_Bsq_Ssq_BdotS(
         metric, cons_undens, prims
     )
@@ -111,6 +115,15 @@ def nn_initial_guess(
         prims.rho, prims.Y_e, prims.temperature
     )
     return x
+
+
+def _require_pyghl():
+    from . import require_bindings
+
+    require_bindings()
+    from . import _pyghl
+
+    return _pyghl
 
 
 def read_dataset_header(fp: BinaryIO) -> tuple[int, int, int]:

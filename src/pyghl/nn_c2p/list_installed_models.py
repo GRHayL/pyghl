@@ -5,14 +5,15 @@ import argparse
 import pyghl as ghl
 
 
-def build_parser() -> argparse.ArgumentParser:
+def build_parser(prog: str | None = None) -> argparse.ArgumentParser:
     return argparse.ArgumentParser(
+        prog=prog,
         description="List packaged GRHayL nn_c2p models that can be auto-matched to EOS files."
     )
 
 
-def main() -> int:
-    build_parser().parse_args()
+def main(argv: list[str] | None = None, prog: str | None = None) -> int:
+    build_parser(prog=prog).parse_args(argv)
     models = ghl.nn.installed_nn_models()
     if not models:
         print("No installed neural-network EOS models were found.")

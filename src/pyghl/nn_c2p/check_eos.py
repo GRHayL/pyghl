@@ -6,16 +6,17 @@ from pathlib import Path
 import pyghl as ghl
 
 
-def build_parser() -> argparse.ArgumentParser:
+def build_parser(prog: str | None = None) -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
+        prog=prog,
         description="Inspect an EOS HDF5 file for embedded GRHayL nn_c2p data."
     )
     parser.add_argument("eos_hdf5", type=Path)
     return parser
 
 
-def main() -> int:
-    args = build_parser().parse_args()
+def main(argv: list[str] | None = None, prog: str | None = None) -> int:
+    args = build_parser(prog=prog).parse_args(argv)
     info = ghl.nn.eos_nn_metadata(args.eos_hdf5)
     print(f"EOS file: {info['eos_filename']}")
     print(f"Path: {info['eos_path']}")

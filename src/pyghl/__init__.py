@@ -45,7 +45,9 @@ except ImportError as exc:
     _BINDINGS_IMPORT_ERROR = exc
 else:
     _BINDINGS_AVAILABLE = True
-    from . import eos, nn
+    from . import eos
+
+from . import nn
 
 
 def require_bindings() -> None:
@@ -59,6 +61,7 @@ def require_bindings() -> None:
 
 __all__ = [
     "_BINDINGS_AVAILABLE",
+    "nn",
     "require_bindings",
 ]
 
@@ -93,7 +96,6 @@ if _BINDINGS_AVAILABLE:
         "initialize_primitives",
         "limit_utilde_and_compute_v",
         "limit_v_and_compute_u0",
-        "nn",
         "nn_c2p_guess",
         "nn_c2p_guess_x",
         "tabulated_con2prim_multi_method",

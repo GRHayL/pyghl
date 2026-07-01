@@ -30,19 +30,33 @@ def build_parser() -> argparse.ArgumentParser:
     )
     train.add_argument("args", nargs=argparse.REMAINDER)
 
-    append_eos = subparsers.add_parser(
-        "append-eos",
+    append = subparsers.add_parser(
+        "append",
         help="Append a trained neural-network model to an EOS HDF5 file.",
         add_help=False,
     )
-    append_eos.add_argument("args", nargs=argparse.REMAINDER)
+    append.add_argument("args", nargs=argparse.REMAINDER)
 
-    append = subparsers.add_parser(
-        "append",
-        help="Alias for append-eos.",
+    check_eos = subparsers.add_parser(
+        "check-eos",
+        help="Inspect an EOS HDF5 file for embedded neural-network data.",
         add_help=False,
     )
-    append.add_argument("args", nargs=argparse.REMAINDER)
+    check_eos.add_argument("args", nargs=argparse.REMAINDER)
+
+    list_models = subparsers.add_parser(
+        "list-models",
+        help="List installed neural-network models.",
+        add_help=False,
+    )
+    list_models.add_argument("args", nargs=argparse.REMAINDER)
+
+    remove_eos_nn = subparsers.add_parser(
+        "remove-eos-nn",
+        help="Remove embedded neural-network data from an EOS HDF5 file.",
+        add_help=False,
+    )
+    remove_eos_nn.add_argument("args", nargs=argparse.REMAINDER)
 
     return parser
 
@@ -71,6 +85,21 @@ def main(argv: Sequence[str] | None = None) -> int:
         from .nn_c2p.append_eos_file import main as append_main
 
         return append_main(command_args, prog=f"pyghl {command}")
+
+    if command == "check-eos":
+        from .nn_c2p.check_eos import main as check_main
+
+        return check_main(command_args, prog="pyghl check-eos")
+
+    if command == "list-models":
+        from .nn_c2p.list_installed_models import main as list_main
+
+        return list_main(command_args, prog="pyghl list-models")
+
+    if command == "remove-eos-nn":
+        from .nn_c2p.remove_eos_nn import main as remove_main
+
+        return remove_main(command_args, prog="pyghl remove-eos-nn")
 
     parser.error(f"unknown command: {command}")
     return 2

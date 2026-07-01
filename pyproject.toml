@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "pyghl"
-version = "0.3.0"
+version = "0.3.1"
 description = "Python bindings for GRHayL (EOS-first preview)"
 readme = "README.md"
 requires-python = ">=3.9"
@@ -26,9 +26,6 @@ classifiers = [
 
 [project.scripts]
 pyghl = "pyghl.cli:main"
-pyghl-nn-train = "pyghl.nn_c2p.nn_c2p_train:main"
-pyghl-append-eos = "pyghl.nn_c2p.append_eos_file:main"
-pyghl-nn-header-to-hdf5 = "pyghl.nn_c2p.header_to_hdf5:main"
 
 [tool.setuptools]
 package-dir = {"" = "src"}

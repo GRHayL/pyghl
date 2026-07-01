@@ -6,8 +6,9 @@ from pathlib import Path
 import pyghl as ghl
 
 
-def build_parser() -> argparse.ArgumentParser:
+def build_parser(prog: str | None = None) -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
+        prog=prog,
         description="Remove the embedded GRHayL nn_c2p block from an EOS HDF5 file."
     )
     parser.add_argument("eos_hdf5", type=Path)
@@ -15,8 +16,8 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def main() -> int:
-    args = build_parser().parse_args()
+def main(argv: list[str] | None = None, prog: str | None = None) -> int:
+    args = build_parser(prog=prog).parse_args(argv)
     info = ghl.nn.eos_nn_metadata(args.eos_hdf5)
     if not info["contains_nn"]:
         print(f"No embedded neural-network dataset found in {args.eos_hdf5}; nothing to do.")
