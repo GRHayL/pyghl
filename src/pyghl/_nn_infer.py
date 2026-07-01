@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Any, Dict, Tuple, Union
 
 import numpy as np
@@ -17,6 +18,26 @@ from ._nn_common import (
 OUT_KIND_X_BOUNDED = 0
 OUT_KIND_LINEAR = 1
 OUT_KIND_LOG_LINEAR = 2
+
+
+def _checkpoint_model(model: nn.Module) -> nn.Module:
+    return getattr(model, "_orig_mod", model)
+
+
+def _safe_torch_load(
+    path: str | Path,
+    *,
+    map_location: str | torch.device = "cpu",
+) -> Dict[str, Any]:
+    try:
+        obj = torch.load(path, map_location=map_location, weights_only=True)
+    except TypeError as exc:
+        raise RuntimeError(
+            "Inference-bundle loading requires a PyTorch version with torch.load(weights_only=True)."
+        ) from exc
+    if not isinstance(obj, dict):
+        raise ValueError(f"Expected inference-bundle dict in {str(path)!r}, got {type(obj).__name__}.")
+    return obj
 
 
 def decode_output_targets(
@@ -103,14 +124,15 @@ def save_inference_bundle(
     x_stats: Dict[str, torch.Tensor],
     y_stats: Dict[str, torch.Tensor],
 ) -> None:
+    base_model = _checkpoint_model(model)
     bundle = {
         "arch": {
-            "in_dim": int(model.in_dim),
-            "hidden_dim": int(model.hidden_dim),
-            "n_hidden": int(model.n_hidden),
-            "out_dim": int(model.out_dim),
+            "in_dim": int(base_model.in_dim),
+            "hidden_dim": int(base_model.hidden_dim),
+            "n_hidden": int(base_model.n_hidden),
+            "out_dim": int(base_model.out_dim),
         },
-        "state_dict": {k: v.detach().cpu() for k, v in model.state_dict().items()},
+        "state_dict": {k: v.detach().cpu() for k, v in base_model.state_dict().items()},
         "ft_stats": {
             "kind": ft_stats.kind.detach().cpu().to(torch.int32),
             "eps": float(ft_stats.eps),
@@ -134,7 +156,7 @@ def load_inference_bundle(
     Dict[str, torch.Tensor],
     Dict[str, torch.Tensor],
 ]:
-    ckpt = torch.load(path, map_location=map_location)
+    ckpt = _safe_torch_load(path, map_location=map_location)
 
     arch = ckpt["arch"]
     model = TinyMLP_Logit(
@@ -262,4 +284,3 @@ def cons_to_x_guess(
 
     xhat = predict_numpy_like(model, x_in, ft_stats, x_stats, y_stats)
     return float(xhat[0, 0].detach().cpu().item())
-

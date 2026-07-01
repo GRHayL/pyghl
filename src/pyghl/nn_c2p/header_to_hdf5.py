@@ -128,6 +128,8 @@ def write_hdf5(payload: dict[str, object], output_path: Path, *, source_header: 
         },
         "audit": dict(payload["audit"]),
     }
+    if "source_eos" in payload:
+        mapped["source_eos"] = dict(payload["source_eos"])  # type: ignore[arg-type]
     write_nn_hdf5(mapped, output_path, root_attrs={"source_header": str(source_header)})
 
 

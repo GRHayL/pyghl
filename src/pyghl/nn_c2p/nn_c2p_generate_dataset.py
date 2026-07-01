@@ -162,6 +162,9 @@ def generate_dataset(
             f"Unsupported target_mode {target_mode!r}. "
             "Expected 'x_correction' or 'x_best_correction'."
         )
+    n_pts = int(n_pts)
+    if n_pts < 2:
+        raise ValueError("n_pts must be >= 2.")
     if int(scan_points) < 1:
         raise ValueError("scan_points must be >= 1.")
 
@@ -195,7 +198,7 @@ def generate_dataset(
     output = Path(output) if output is not None else Path(
         "nn_test_dataset.bin" if is_test_dataset else "nn_training_dataset.bin"
     )
-    block_struct = struct.Struct("=16f")
+    block_struct = struct.Struct("<16f")
 
     lr_min = math.log10(eos.rho_min)
     lr_max = math.log10(eos.rho_max)
@@ -219,7 +222,7 @@ def generate_dataset(
 
     report_progress_every = max(1, n_blocks // 100)
     with output.open("wb") as fp:
-        fp.write(struct.pack("=QQQ", 4, 16, n_blocks))
+        fp.write(struct.pack("<QQQ", 4, 16, n_blocks))
         count = 0
         for n_rho in range(n_pts):
             for n_t in range(n_pts):

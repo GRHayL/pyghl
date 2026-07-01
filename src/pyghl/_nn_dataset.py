@@ -40,22 +40,21 @@ def read_training_dataset(
         print(f"Input data floating point size: {float_size_bits} bits")
 
         le_dtype = np.dtype("<f4" if float_size_bits == 32 else "<f8")
-        expected_count = int(n_floats_per_block) * int(n_blocks)
-        data = f.read()
+        rows = int(n_blocks)
+        cols = int(n_floats_per_block)
+        expected_count = rows * cols
+        expected_bytes = expected_count * le_dtype.itemsize
 
-    itemsize = le_dtype.itemsize
-    if len(data) % itemsize != 0:
+    actual_bytes = file_path.stat().st_size - HEADER_SIZE_BYTES
+    if actual_bytes != expected_bytes:
         raise ValueError(
-            f"Incomplete float data in {str(file_path)!r}: data section size {len(data)} bytes is not a multiple of "
-            f"float size {itemsize} bytes."
+            f"Float data size mismatch in {str(file_path)!r}: expected {expected_bytes} bytes "
+            f"(n_blocks={n_blocks} * n_floats_per_block={n_floats_per_block}), got {actual_bytes}."
         )
 
-    got_count = len(data) // itemsize
-    if got_count != expected_count:
-        raise ValueError(
-            f"Float count mismatch in {str(file_path)!r}: expected {expected_count} floats "
-            f"(n_blocks={n_blocks} * n_floats_per_block={n_floats_per_block}), got {got_count}."
-        )
+    with file_path.open("rb") as f:
+        f.seek(HEADER_SIZE_BYTES)
+        data = f.read(expected_bytes)
 
     arr = np.frombuffer(data, dtype=le_dtype, count=expected_count).reshape(
         (int(n_blocks), int(n_floats_per_block))

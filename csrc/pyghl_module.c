@@ -95,6 +95,56 @@ static const char *ghl_error_name(const ghl_error_codes_t code) {
       return "ghl_error_invalid_Z";
     case ghl_error_newman_invalid_discriminant:
       return "ghl_error_newman_invalid_discriminant";
+    case ghl_error_used_disabled_hdf5:
+      return "ghl_error_used_disabled_hdf5";
+    case ghl_error_out_of_memory:
+      return "ghl_error_out_of_memory";
+    case ghl_error_eos_struct_is_null:
+      return "ghl_error_eos_struct_is_null";
+    case ghl_error_invalid_eos_type:
+      return "ghl_error_invalid_eos_type";
+    case ghl_error_invalid_eos_table_type:
+      return "ghl_error_invalid_eos_table_type";
+    case ghl_error_could_not_open_file:
+      return "ghl_error_could_not_open_file";
+    case ghl_error_hdf5_dataset_could_not_open:
+      return "ghl_error_hdf5_dataset_could_not_open";
+    case ghl_error_hdf5_dataset_could_not_read:
+      return "ghl_error_hdf5_dataset_could_not_read";
+    case ghl_error_hdf5_dataset_invalid_ndims:
+      return "ghl_error_hdf5_dataset_invalid_ndims";
+    case ghl_error_hdf5_dataset_size_mismatch:
+      return "ghl_error_hdf5_dataset_size_mismatch";
+    case ghl_error_invalid_rho_atm:
+      return "ghl_error_invalid_rho_atm";
+    case ghl_error_rho_min_gt_rho_max:
+      return "ghl_error_rho_min_gt_rho_max";
+    case ghl_error_invalid_press_atm:
+      return "ghl_error_invalid_press_atm";
+    case ghl_error_press_min_gt_press_max:
+      return "ghl_error_press_min_gt_press_max";
+    case ghl_error_invalid_Y_e_atm:
+      return "ghl_error_invalid_Y_e_atm";
+    case ghl_error_Y_e_min_gt_Y_e_max:
+      return "ghl_error_Y_e_min_gt_Y_e_max";
+    case ghl_error_invalid_T_atm:
+      return "ghl_error_invalid_T_atm";
+    case ghl_error_T_min_gt_T_max:
+      return "ghl_error_T_min_gt_T_max";
+    case ghl_error_invalid_fermi_dirac_integral_key:
+      return "ghl_error_invalid_fermi_dirac_integral_key";
+    case ghl_error_nn_c2p_model_is_null:
+      return "ghl_error_nn_c2p_model_is_null";
+    case ghl_error_nn_c2p_invalid_dimensions:
+      return "ghl_error_nn_c2p_invalid_dimensions";
+    case ghl_error_nn_c2p_invalid_input_index:
+      return "ghl_error_nn_c2p_invalid_input_index";
+    case ghl_error_nn_c2p_missing_array:
+      return "ghl_error_nn_c2p_missing_array";
+    case ghl_error_nn_c2p_invalid_kind:
+      return "ghl_error_nn_c2p_invalid_kind";
+    case ghl_error_nn_c2p_invalid_number:
+      return "ghl_error_nn_c2p_invalid_number";
     default:
       return "ghl_error_unknown";
   }
@@ -614,7 +664,11 @@ static PyObject *eos_load_nn_c2p_hdf5(PyObject *self, PyObject *args) {
     return PyErr_SetFromErrnoWithFilename(PyExc_OSError, model_path);
   }
 
-  ghl_c2p_nn_load_hdf5(model_path, &eos->eos);
+  const ghl_error_codes_t error = ghl_c2p_nn_load_hdf5(model_path, &eos->eos);
+  if(error != ghl_success) {
+    raise_ghl_error("load_nn_c2p_hdf5", error);
+    return NULL;
+  }
   Py_RETURN_NONE;
 }
 
@@ -1224,10 +1278,13 @@ static PyObject *py_initialize_tabulated_eos_functions_and_params(
 
   memset(&eos->eos, 0, sizeof(eos->eos));
   eos->initialized = 0;
-  eos->eos.enable_neural_net_c2p = (bool)enable_neural_net_c2p;
 
-  ghl_initialize_tabulated_eos_functions_and_params(
+  ghl_initialize_eos_functions(ghl_eos_tabulated);
+  const ghl_error_codes_t error = ghl_initialize_tabulated_eos(
         table_path,
+        ghl_eos_table_stellarcollapse,
+        false,
+        (bool)enable_neural_net_c2p,
         rho_atm,
         rho_min,
         rho_max,
@@ -1238,6 +1295,14 @@ static PyObject *py_initialize_tabulated_eos_functions_and_params(
         T_min,
         T_max,
         &eos->eos);
+  if(error != ghl_success) {
+    if(ghl_tabulated_free_memory != NULL) {
+      ghl_tabulated_free_memory(&eos->eos);
+    }
+    raise_ghl_error("initialize_tabulated_eos", error);
+    Py_DECREF((PyObject *)eos);
+    return NULL;
+  }
 
   eos->eos.root_finding_precision = root_finding_precision;
   eos->initialized = 1;
@@ -1615,7 +1680,9 @@ static PyObject *py_tabulated_Palenzuela1D_energy(PyObject *module, PyObject *ar
     return NULL;
   }
 
-  Py_INCREF(diagnostics_obj);
+  if(!created_diagnostics) {
+    Py_INCREF(diagnostics_obj);
+  }
   return diagnostics_obj;
 }
 
@@ -1687,7 +1754,9 @@ static PyObject *py_tabulated_con2prim_multi_method(PyObject *module, PyObject *
     return NULL;
   }
 
-  Py_INCREF(diagnostics_obj);
+  if(!created_diagnostics) {
+    Py_INCREF(diagnostics_obj);
+  }
   return diagnostics_obj;
 }
 
@@ -1805,6 +1874,7 @@ PyMODINIT_FUNC PyInit__pyghl(void) {
     Py_DECREF(module);
     return NULL;
   }
+  Py_INCREF(GRHayLError);
 
   Py_INCREF(&PyGHLParamsType);
   PyModule_AddObject(module, "Params", (PyObject *)&PyGHLParamsType);

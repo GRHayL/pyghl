@@ -470,6 +470,26 @@ def _normalize_state_dict_keys(state_dict: Dict[str, torch.Tensor]) -> Dict[str,
     return state_dict
 
 
+def _checkpoint_model(model: nn.Module) -> nn.Module:
+    return getattr(model, "_orig_mod", model)
+
+
+def _safe_torch_load(
+    path: str | Path,
+    *,
+    map_location: str | torch.device = "cpu",
+) -> Dict[str, Any]:
+    try:
+        obj = torch.load(path, map_location=map_location, weights_only=True)
+    except TypeError as exc:
+        raise RuntimeError(
+            "Checkpoint loading requires a PyTorch version with torch.load(weights_only=True)."
+        ) from exc
+    if not isinstance(obj, dict):
+        raise ValueError(f"Expected checkpoint dict in {str(path)!r}, got {type(obj).__name__}.")
+    return obj
+
+
 def _load_training_checkpoint(
     checkpoint_path: str,
     model: nn.Module,
@@ -477,11 +497,14 @@ def _load_training_checkpoint(
     scheduler: torch.optim.lr_scheduler.ReduceLROnPlateau,
     strict: bool,
 ) -> Dict[str, Any]:
-    ckpt = torch.load(checkpoint_path, map_location="cpu")
+    ckpt = _safe_torch_load(checkpoint_path, map_location="cpu")
     model_state = ckpt.get("model_state_dict")
     if model_state is None:
         raise KeyError(f"Checkpoint {checkpoint_path!r} is missing 'model_state_dict'.")
-    model.load_state_dict(_normalize_state_dict_keys(model_state), strict=strict)
+    _checkpoint_model(model).load_state_dict(
+        _normalize_state_dict_keys(model_state),
+        strict=strict,
+    )
 
     if "opt_state_dict" in ckpt:
         optimizer.load_state_dict(ckpt["opt_state_dict"])
@@ -758,11 +781,7 @@ def train_regressor(
     if checkpoint_every and checkpoint_every > 0:
         os.makedirs(checkpoint_dir, exist_ok=True)
 
-    gen_ep = (
-        torch.Generator(device="cuda").manual_seed(seed)
-        if device.type == "cuda"
-        else torch.Generator().manual_seed(seed)
-    )
+    gen_ep = torch.Generator().manual_seed(seed)
     resume_checkpoint_path = _resolve_resume_checkpoint(resume_checkpoint)
     if resume_checkpoint_path is not None:
         restored = _load_training_checkpoint(
@@ -828,7 +847,7 @@ def train_regressor(
 
         for ep in range(start_epoch, epochs + 1):
             model.train()
-            perm_tr = torch.randperm(Ntr, generator=gen_ep, device=Xtr01.device)
+            perm_tr = torch.randperm(Ntr, generator=gen_ep).to(Xtr01.device)
             loss_sum = torch.zeros((), device=device)
             n_batches = 0
 
@@ -874,8 +893,9 @@ def train_regressor(
             if improved:
                 best_rel_rmse = float(val_rel_stop_metric)
                 best_epoch = ep
+                base_model = _checkpoint_model(model)
                 best_state = {
-                    k: v.detach().cpu().clone() for k, v in model.state_dict().items()
+                    k: v.detach().cpu().clone() for k, v in base_model.state_dict().items()
                 }
                 bad = 0
             else:
@@ -907,6 +927,7 @@ def train_regressor(
             )
 
             if checkpoint_every and checkpoint_every > 0 and (ep % checkpoint_every == 0):
+                base_model = _checkpoint_model(model)
                 ckpt_path = os.path.join(
                     checkpoint_dir, f"{checkpoint_prefix}_ep{ep:05d}.pt"
                 )
@@ -917,7 +938,7 @@ def train_regressor(
                         "best_rel_rmse_combined": best_rel_rmse,
                         "perm_sha1_16": perm_hash,
                         "model_state_dict": {
-                            k: v.detach().cpu() for k, v in model.state_dict().items()
+                            k: v.detach().cpu() for k, v in base_model.state_dict().items()
                         },
                         "best_model_state_dict": best_state,
                         "opt_state_dict": _optimizer_state_to_cpu(opt.state_dict()),
@@ -951,7 +972,7 @@ def train_regressor(
                 break
 
     if best_state is not None:
-        model.load_state_dict(best_state)
+        _checkpoint_model(model).load_state_dict(best_state)
 
     ft_stats = FeatureTransformStats(
         kind=ft_stats.kind.detach().cpu().to(torch.int32),

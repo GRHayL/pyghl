@@ -143,11 +143,11 @@ def main() -> int:
         fp.write("# Col. 1: GRHayL - Initial x Error vs. Exact\n")
         fp.write("# Col. 2: GRHayL - Initial Error vs. Orig\n")
         fp.write("# Col. 3: GRHayL - Final Error vs. Orig\n")
-        fp.write("# Col. 4: GRHayL - EOS Table Inversions\n")
+        fp.write("# Col. 4: GRHayL - Iterations\n")
         fp.write("# Col. 5: NN     - Initial x Error vs. Exact\n")
         fp.write("# Col. 6: NN     - Initial Error vs. Orig\n")
         fp.write("# Col. 7: NN     - Final Error vs. Orig\n")
-        fp.write("# Col. 8: NN     - EOS Table Inversions\n")
+        fp.write("# Col. 8: NN     - Iterations\n")
 
         for data in ghl.nn.iter_dataset_points(args.dataset):
             count += 1
@@ -199,7 +199,6 @@ def main() -> int:
             prims_nn.temperature = eos.table_T_max
             prims_nn.BU = (data.Bx, data.By, data.Bz)
 
-            diagnostics.n_eos_table_inversions = 0
             prims_ghl = ghl.guess_primitives(params, eos, metric, cons_undens)
             x_ghl = compute_x_from_prims(metric, prims_ghl)
             prims_ghl.BU = (data.Bx, data.By, data.Bz)
@@ -213,14 +212,12 @@ def main() -> int:
                 ghl.tabulated_Palenzuela1D_energy(
                     params, eos, metric, metric_aux, cons_undens, prims_ghl, diagnostics
                 )
-                ghl_n_eos_inversions = diagnostics.n_eos_table_inversions
+                ghl_n_eos_inversions = diagnostics.n_iter
                 error_c2p_ghl = compute_prim_errors(prims_orig, prims_ghl)
             except ghl.GRHayLError:
                 pass
             ghl_total_s += time.perf_counter() - start
 
-            diagnostics.n_eos_table_inversions = 0
-            diagnostics.T_exact = prims_orig.temperature
             x_guess = ghl.nn.nn_initial_guess(params, eos, metric, cons_undens, prims_nn)
             error_nn = compute_prim_errors(prims_orig, prims_nn)
             nn_n_eos_inversions = None
@@ -228,25 +225,26 @@ def main() -> int:
             start = time.perf_counter()
             try:
                 eos.enable_neural_net_c2p = True
-                diagnostics.x_exact = data.x
                 ghl.tabulated_Palenzuela1D_energy(
                     params, eos, metric, metric_aux, cons_undens, prims_nn, diagnostics
                 )
-                nn_n_eos_inversions = diagnostics.n_eos_table_inversions
+                nn_n_eos_inversions = diagnostics.n_iter
                 error_c2p_nn = compute_prim_errors(prims_orig, prims_nn)
             except ghl.GRHayLError:
                 pass
             nn_total_s += time.perf_counter() - start
 
+            ghl_x_err = rel_err(data.x, x_ghl)
+            nn_x_err = rel_err(data.x, x_guess)
             ghl_err_text = (
-                f"{rel_err(x_ghl, data.x):.8e} {error_ghl:.8e} {error_c2p_ghl:.8e} {ghl_n_eos_inversions:d}"
+                f"{ghl_x_err:.8e} {error_ghl:.8e} {error_c2p_ghl:.8e} {ghl_n_eos_inversions:d}"
                 if ghl_n_eos_inversions is not None
-                else f"{rel_err(x_ghl, data.x):.8e} NAN NAN NAN"
+                else f"{ghl_x_err:.8e} NAN NAN NAN"
             )
             nn_err_text = (
-                f"{rel_err(x_guess, data.x):.8e} {error_nn:.8e} {error_c2p_nn:.8e} {nn_n_eos_inversions:d}"
+                f"{nn_x_err:.8e} {error_nn:.8e} {error_c2p_nn:.8e} {nn_n_eos_inversions:d}"
                 if nn_n_eos_inversions is not None
-                else f"{rel_err(x_guess, data.x):.8e} NAN NAN NAN"
+                else f"{nn_x_err:.8e} NAN NAN NAN"
             )
             fp.write(f"{ghl_err_text} {nn_err_text}\n")
 

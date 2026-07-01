@@ -117,7 +117,7 @@ def read_dataset_header(fp: BinaryIO) -> tuple[int, int, int]:
     payload = fp.read(24)
     if len(payload) != 24:
         raise EOFError("dataset header is incomplete")
-    return struct.unpack("=QQQ", payload)
+    return struct.unpack("<QQQ", payload)
 
 
 def iter_dataset_points(path: str | Path) -> Iterator[DatasetPoint]:
@@ -128,7 +128,7 @@ def iter_dataset_points(path: str | Path) -> Iterator[DatasetPoint]:
         if n_floats_per_block != 16:
             raise ValueError(f"expected 16 floats per block, got {n_floats_per_block}")
 
-        block_struct = struct.Struct("=16f")
+        block_struct = struct.Struct("<16f")
         for _ in range(n_blocks):
             payload = fp.read(block_struct.size)
             if len(payload) != block_struct.size:
