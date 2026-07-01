@@ -202,6 +202,12 @@ def installed_nn_models(*args, **kwargs):
     return _nn_hdf5.installed_model_summaries(*args, **kwargs)
 
 
+def find_matching_installed_model(*args, **kwargs):
+    from . import _nn_hdf5
+
+    return _nn_hdf5.find_matching_installed_nn_model(*args, **kwargs)
+
+
 def install_nn_model(*args, **kwargs):
     from . import _nn_hdf5
 
