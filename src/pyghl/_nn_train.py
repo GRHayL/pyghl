@@ -20,7 +20,7 @@ from ._nn_common import (
     apply_robust_minmax,
     compute_x_bounds_from_inputs,
 )
-from ._nn_dataset import read_solver_label_dataset, read_training_dataset
+from ._nn_dataset import read_training_dataset
 from ._nn_hdf5 import (
     append_nn_to_eos_file,
     build_eos_metadata,
@@ -28,12 +28,7 @@ from ._nn_hdf5 import (
     install_nn_model,
     write_nn_hdf5,
 )
-from ._nn_infer import (
-    OUT_KIND_LINEAR,
-    OUT_KIND_LOG_LINEAR,
-    OUT_KIND_X_BOUNDED,
-    save_inference_bundle,
-)
+from ._nn_infer import OUT_KIND_X_BOUNDED, save_inference_bundle
 from .nn_c2p.nn_c2p_generate_dataset import generate_dataset
 
 EXPORT_USE_INCLUDE_GUARD: bool = True
@@ -394,73 +389,6 @@ def relative_error_loss_x(
     raise ValueError(f"Unknown relative loss mode '{mode}'. Use 'mse', 'mae', or 'log1p_mse'.")
 
 
-def region_distance_loss(
-    y_pred: torch.Tensor,
-    y_grid: torch.Tensor,
-    robust_mask: torch.Tensor,
-    fast_mask: torch.Tensor,
-    sample_weight: torch.Tensor,
-    *,
-    fast_fallback_weight: float = 0.25,
-) -> torch.Tensor:
-    y_expanded = y_pred.to(torch.float32)
-    if y_expanded.ndim != 2 or y_expanded.shape[1] != 1:
-        raise ValueError(f"Expected y_pred shape (N,1). Got {tuple(y_expanded.shape)}")
-    grid = y_grid.to(device=y_pred.device, dtype=torch.float32).view(1, -1)
-    dist2 = (y_expanded - grid) ** 2
-
-    huge = torch.full_like(dist2, 1.0e6)
-    robust_any = robust_mask.any(dim=1, keepdim=True)
-    fast_any = fast_mask.any(dim=1, keepdim=True)
-    robust_best = torch.where(robust_mask, dist2, huge).min(dim=1).values
-    fast_best = torch.where(fast_mask, dist2, huge).min(dim=1).values
-    fallback = torch.where(
-        robust_any.squeeze(1),
-        robust_best,
-        torch.where(
-            fast_any.squeeze(1),
-            fast_fallback_weight * fast_best,
-            torch.zeros_like(fast_best),
-        ),
-    )
-    weights = sample_weight.to(device=y_pred.device, dtype=torch.float32).reshape(-1)
-    denom = torch.clamp(weights.sum(), min=1.0)
-    return (fallback * weights).sum() / denom
-
-
-def soft_target_cross_entropy(
-    logits: torch.Tensor,
-    target_prob: torch.Tensor,
-    sample_weight: torch.Tensor,
-) -> torch.Tensor:
-    logp = torch.log_softmax(logits.to(torch.float32), dim=1)
-    ce = -(target_prob.to(torch.float32) * logp).sum(dim=1)
-    weights = sample_weight.to(device=logits.device, dtype=torch.float32).reshape(-1)
-    denom = torch.clamp(weights.sum(), min=1.0)
-    return (ce * weights).sum() / denom
-
-
-def y01_to_region_hit_rate(
-    y_pred: torch.Tensor,
-    y_grid: torch.Tensor,
-    mask: torch.Tensor,
-) -> float:
-    pred = y_pred.detach().cpu().reshape(-1)
-    grid = y_grid.detach().cpu().reshape(-1)
-    mask_cpu = mask.detach().cpu()
-    hit = 0
-    total = 0
-    for i in range(mask_cpu.shape[0]):
-        valid = mask_cpu[i]
-        if not bool(valid.any().item()):
-            continue
-        total += 1
-        idx = int(torch.argmin(torch.abs(grid - pred[i])).item())
-        if bool(valid[idx].item()):
-            hit += 1
-    return float(hit) / float(total) if total else 0.0
-
-
 def _finalize_stats_and_model(
     *,
     model: nn.Module,
@@ -612,7 +540,7 @@ def train_regressor(
     n_out: Optional[int] = None,
     target_mode: str = "x_correction",
     hidden_dim: int = 3,
-    n_hidden: int = 3,
+    n_hidden: int = 2,
     lr: float = 5e-4,
     epochs: int = 2000,
     batch_size: int = 4096,
@@ -666,7 +594,7 @@ def train_regressor(
 
     gen = torch.Generator().manual_seed(seed)
     if n_out is None:
-        n_out = 1 if target_mode in ("x_correction", "x_best_correction") else 3
+        n_out = 1
 
     X_raw, y = load_dataset_from_numpy(
         data_np, n_out=n_out, drop_nonfinite_rows=drop_nonfinite_rows
@@ -675,41 +603,33 @@ def train_regressor(
         raise ValueError(
             f"Input has d_in={X_raw.shape[1]} but requires q_idx={q_idx}, s_idx={s_idx}."
         )
-    if target_mode not in ("x_correction", "x_best_correction", "rho_T_W"):
+    if target_mode not in ("x_correction", "x_best_correction"):
         raise ValueError(
             f"Unsupported target_mode {target_mode!r}. "
-            "Expected 'x_correction', 'x_best_correction', or 'rho_T_W'."
+            "Expected 'x_correction' or 'x_best_correction'."
         )
-    if target_mode == "rho_T_W":
-        if y.shape[1] != 3:
-            raise ValueError(
-                f"Expected targets (rho, T, W) with d_out=3. Got d_out={y.shape[1]}"
-            )
-        if not bool((y > 0.0).all().item()):
-            raise ValueError("Targets (rho, T, W) must all be strictly positive.")
-    else:
-        if y.shape[1] != 1:
-            raise ValueError(
-                f"Expected target (x_exact) with d_out=1. Got d_out={y.shape[1]}"
-            )
-        X_raw, y, n_bad_width = filter_invalid_width_rows(
-            X_raw,
-            y,
-            q_idx=q_idx,
-            width_tiny=width_tiny,
-            drop_invalid=drop_invalid_width_rows,
+    if y.shape[1] != 1:
+        raise ValueError(
+            f"Expected target (x_exact) with d_out=1. Got d_out={y.shape[1]}"
         )
-        y, changed_frac = clamp_x_to_bounds(
-            X_raw,
-            y,
-            q_idx=q_idx,
-            s_idx=s_idx,
-            y_eps=y_eps,
-        )
-        print(
-            f"Prepared bounded-x targets: dropped_invalid_width_rows={n_bad_width} "
-            f"clamped_target_frac={changed_frac:.6e}"
-        )
+    X_raw, y, n_bad_width = filter_invalid_width_rows(
+        X_raw,
+        y,
+        q_idx=q_idx,
+        width_tiny=width_tiny,
+        drop_invalid=drop_invalid_width_rows,
+    )
+    y, changed_frac = clamp_x_to_bounds(
+        X_raw,
+        y,
+        q_idx=q_idx,
+        s_idx=s_idx,
+        y_eps=y_eps,
+    )
+    print(
+        f"Prepared bounded-x targets: dropped_invalid_width_rows={n_bad_width} "
+        f"clamped_target_frac={changed_frac:.6e}"
+    )
 
     N = X_raw.shape[0]
     n_val = max(1, min(int(val_frac * N), N - 1))
@@ -722,40 +642,17 @@ def train_regressor(
     Xtr_raw, ytr = X_raw[tr_idx], y[tr_idx]
     Xva_raw, yva = X_raw[val_idx], y[val_idx]
 
-    if target_mode == "rho_T_W":
-        ytr_log = torch.cat(
-            (
-                transform_positive_target(ytr[:, 0:1]),
-                transform_positive_target(ytr[:, 1:2]),
-                transform_positive_target(ytr[:, 2:3]),
-            ),
-            dim=1,
-        )
-        yva_log = torch.cat(
-            (
-                transform_positive_target(yva[:, 0:1]),
-                transform_positive_target(yva[:, 1:2]),
-                transform_positive_target(yva[:, 2:3]),
-            ),
-            dim=1,
-        )
-        y_out_stats = fit_output_linear_scaling(
-            ytr_log, q_lo=robust_mm_qlo, q_hi=robust_mm_qhi
-        )
-        ytr_y01 = linear_to_y01_target(ytr_log, y_out_stats, y_eps=y_eps)
-        yva_y01 = linear_to_y01_target(yva_log, y_out_stats, y_eps=y_eps)
-    else:
-        ytr_y01 = x_to_y01_target(
-            Xtr_raw, ytr, q_idx=q_idx, s_idx=s_idx, y_eps=y_eps
-        )
-        yva_y01 = x_to_y01_target(
-            Xva_raw, yva, q_idx=q_idx, s_idx=s_idx, y_eps=y_eps
-        )
-        y_out_stats = {
-            "lo": torch.zeros(1, dtype=torch.float32),
-            "hi": torch.ones(1, dtype=torch.float32),
-            "invrng": torch.ones(1, dtype=torch.float32),
-        }
+    ytr_y01 = x_to_y01_target(
+        Xtr_raw, ytr, q_idx=q_idx, s_idx=s_idx, y_eps=y_eps
+    )
+    yva_y01 = x_to_y01_target(
+        Xva_raw, yva, q_idx=q_idx, s_idx=s_idx, y_eps=y_eps
+    )
+    y_out_stats = {
+        "lo": torch.zeros(1, dtype=torch.float32),
+        "hi": torch.ones(1, dtype=torch.float32),
+        "invrng": torch.ones(1, dtype=torch.float32),
+    }
 
     ft_stats = fit_feature_transform(
         Xtr_raw,
@@ -785,15 +682,9 @@ def train_regressor(
         "std": x_std_stats["std"].detach().cpu().to(torch.float32),
         "invstd": x_std_stats["invstd"].detach().cpu().to(torch.float32),
     }
-    if target_mode == "rho_T_W":
-        out_kind = torch.tensor(
-            [OUT_KIND_LOG_LINEAR, OUT_KIND_LOG_LINEAR, OUT_KIND_LOG_LINEAR],
-            dtype=torch.int32,
-        )
-    else:
-        out_kind = torch.tensor([OUT_KIND_X_BOUNDED], dtype=torch.int32)
+    out_kind = torch.tensor([OUT_KIND_X_BOUNDED], dtype=torch.int32)
 
-    dropped_invalid_width_value = float(n_bad_width) if target_mode == "x_correction" else 0.0
+    dropped_invalid_width_value = float(n_bad_width)
     y_stats: Dict[str, torch.Tensor] = {
         "mean": y_std_stats["mean"].detach().cpu().to(torch.float32),
         "std": y_std_stats["std"].detach().cpu().to(torch.float32),
@@ -925,29 +816,14 @@ def train_regressor(
                 f"# {seed} {perm_hash} {q_idx} {s_idx} {target_mode} {y_eps:.9g} {width_tiny:.9g} "
                 f"{tr_clip_frac:.6e} {va_clip_frac:.6e} {rel_denom_eps:.9g} {rel_loss_mode}\n"
             )
-            if target_mode == "rho_T_W":
-                flog.write("# epoch data columns\n")
-                flog.write("# 1: epoch\n# 2: val_rel_mse_combined\n# 3: val_rel_MAE_rho\n# 4: val_rel_RMSE_rho\n")
-                flog.write("# 5: best_rel_mse_combined\n# 6: best_epoch\n# 7: train_rel_loss\n")
-                flog.write("# 8: val_mse_y01\n# 9: val_clip_frac\n# 10: lr\n")
-                flog.write("# 11: val_rel_MAE_T\n# 12: val_rel_RMSE_T\n# 13: val_rel_MAE_W\n")
-                flog.write("# 14: val_rel_RMSE_W\n")
-            else:
-                flog.write("# epoch data columns\n")
-                flog.write("# 1: epoch\n# 2: val_rel_mse_x\n# 3: val_rel_MAE_x\n# 4: val_rel_RMSE_x\n")
-                flog.write("# 5: best_rel_mse_x\n# 6: best_epoch\n# 7: train_rel_loss\n")
-                flog.write("# 8: val_mse_y01\n# 9: val_clip_frac\n# 10: lr\n")
-        if target_mode == "rho_T_W":
-            print(
-                "#  val_rel_mse_combined val_rel_MAE_rho val_rel_RMSE_rho best_rel_mse_combined best_epoch "
-                "train_rel_loss val_mse_y01 val_clip_frac lr val_rel_MAE_T val_rel_RMSE_T "
-                "val_rel_MAE_W val_rel_RMSE_W"
-            )
-        else:
-            print(
-                "#  val_rel_mse_x val_rel_MAE_x val_rel_RMSE_x best_rel_mse_x best_epoch "
-                "train_rel_loss val_mse_y01 val_clip_frac lr"
-            )
+            flog.write("# epoch data columns\n")
+            flog.write("# 1: epoch\n# 2: val_rel_mse_x\n# 3: val_rel_MAE_x\n# 4: val_rel_RMSE_x\n")
+            flog.write("# 5: best_rel_mse_x\n# 6: best_epoch\n# 7: train_rel_loss\n")
+            flog.write("# 8: val_mse_y01\n# 9: val_clip_frac\n# 10: lr\n")
+        print(
+            "#  val_rel_mse_x val_rel_MAE_x val_rel_RMSE_x best_rel_mse_x best_epoch "
+            "train_rel_loss val_mse_y01 val_clip_frac lr"
+        )
 
         for ep in range(start_epoch, epochs + 1):
             model.train()
@@ -962,26 +838,12 @@ def train_regressor(
 
                 opt.zero_grad(set_to_none=True)
                 y01_pred = torch.sigmoid(model(xb01)).to(torch.float32)
-                if target_mode == "rho_T_W":
-                    y_log_pred = y01_to_linear(y01_pred, y_out_stats, y_eps=y_eps)
-                    y_pred = inverse_transform_positive_target(y_log_pred)
-                    loss_rho = relative_error_loss_x(
-                        y_pred[:, 0:1], yb[:, 0:1], denom_eps=rel_denom_eps, mode=rel_loss_mode
-                    )
-                    loss_T = relative_error_loss_x(
-                        y_pred[:, 1:2], yb[:, 1:2], denom_eps=rel_denom_eps, mode=rel_loss_mode
-                    )
-                    loss_W = relative_error_loss_x(
-                        y_pred[:, 2:3], yb[:, 2:3], denom_eps=rel_denom_eps, mode=rel_loss_mode
-                    )
-                    loss = (loss_rho + loss_T + loss_W) / 3.0
-                else:
-                    x_pred = y01_to_x_differentiable_from_qs(
-                        Xtr_qs_dev[idx], y01_pred, y_eps=y_eps
-                    )
-                    loss = relative_error_loss_x(
-                        x_pred, yb, denom_eps=rel_denom_eps, mode=rel_loss_mode
-                    )
+                x_pred = y01_to_x_differentiable_from_qs(
+                    Xtr_qs_dev[idx], y01_pred, y_eps=y_eps
+                )
+                loss = relative_error_loss_x(
+                    x_pred, yb, denom_eps=rel_denom_eps, mode=rel_loss_mode
+                )
                 loss.backward()
                 if grad_clip_norm is not None:
                     torch.nn.utils.clip_grad_norm_(
@@ -997,28 +859,13 @@ def train_regressor(
                 y01_va = torch.sigmoid(model(Xva01)).to(torch.float32)
                 y01_va_pred = torch.clamp(y01_va, min=clamp_min, max=clamp_max)
                 val_mse_y01 = float(((y01_va_pred - yva_y01_dev) ** 2).mean().item())
-                if target_mode == "rho_T_W":
-                    y_va = inverse_transform_positive_target(
-                        y01_to_linear(y01_va, y_out_stats, y_eps=y_eps)
-                    )
-                    rho_rel = x_relative_metrics(
-                        y_va[:, 0:1], yva_dev[:, 0:1], denom_eps=rel_denom_eps
-                    )
-                    T_rel = x_relative_metrics(
-                        y_va[:, 1:2], yva_dev[:, 1:2], denom_eps=rel_denom_eps
-                    )
-                    W_rel = x_relative_metrics(
-                        y_va[:, 2:3], yva_dev[:, 2:3], denom_eps=rel_denom_eps
-                    )
-                    val_rel_mse_combined = (rho_rel[0] + T_rel[0] + W_rel[0]) / 3.0
-                else:
-                    x_va = y01_to_x_differentiable_from_qs(
-                        Xva_qs_dev, y01_va, y_eps=y_eps
-                    )
-                    x_rel = x_relative_metrics(
-                        x_va, yva_dev, denom_eps=rel_denom_eps
-                    )
-                    val_rel_mse_combined = x_rel[0]
+                x_va = y01_to_x_differentiable_from_qs(
+                    Xva_qs_dev, y01_va, y_eps=y_eps
+                )
+                x_rel = x_relative_metrics(
+                    x_va, yva_dev, denom_eps=rel_denom_eps
+                )
+                val_rel_mse_combined = x_rel[0]
 
             scheduler.step(val_rel_mse_combined)
             improved = (best_rel_rmse - val_rel_mse_combined) > float(min_delta)
@@ -1035,56 +882,27 @@ def train_regressor(
             ep_s = f"{ep:05d}"
             be_s = f"{best_epoch:05d}"
             lr_now = float(opt.param_groups[0].get("lr", lr))
-            if target_mode == "rho_T_W":
-                flog.write(
-                    f"{ep_s} {fmt(val_rel_mse_combined)} {fmt(rho_rel[1])} {fmt(rho_rel[2])} "
-                    f"{fmt(best_rel_rmse)} {be_s} {fmt(train_rel_loss)} {fmt(val_mse_y01)} "
-                    f"{fmt(va_clip_frac)} {fmt(lr_now)} {fmt(T_rel[1])} {fmt(T_rel[2])} "
-                    f"{fmt(W_rel[1])} {fmt(W_rel[2])}\n"
-                )
-            else:
-                flog.write(
-                    f"{ep_s} {fmt(val_rel_mse_combined)} {fmt(x_rel[1])} {fmt(x_rel[2])} "
-                    f"{fmt(best_rel_rmse)} {be_s} {fmt(train_rel_loss)} {fmt(val_mse_y01)} "
-                    f"{fmt(va_clip_frac)} {fmt(lr_now)}\n"
-                )
+            flog.write(
+                f"{ep_s} {fmt(val_rel_mse_combined)} {fmt(x_rel[1])} {fmt(x_rel[2])} "
+                f"{fmt(best_rel_rmse)} {be_s} {fmt(train_rel_loss)} {fmt(val_mse_y01)} "
+                f"{fmt(va_clip_frac)} {fmt(lr_now)}\n"
+            )
             if ep == 1 or (ep % 10 == 0):
                 flog.flush()
-            if target_mode == "rho_T_W":
-                print(
-                    "{ep} {vrm} {vra} {vrr} {br} {be} "
-                    "{trl} {vmy} {cf} {lr} {vtma} {vtmr} {vwma} {vwmr}".format(
-                        ep=ep_s,
-                        vrm=fmt(val_rel_mse_combined),
-                        vra=fmt(rho_rel[1]),
-                        vrr=fmt(rho_rel[2]),
-                        br=fmt(best_rel_rmse),
-                        be=be_s,
-                        trl=fmt(train_rel_loss),
-                        vmy=fmt(val_mse_y01),
-                        cf=fmt(va_clip_frac),
-                        lr=fmt(lr_now),
-                        vtma=fmt(T_rel[1]),
-                        vtmr=fmt(T_rel[2]),
-                        vwma=fmt(W_rel[1]),
-                        vwmr=fmt(W_rel[2]),
-                    )
+            print(
+                "{ep} {vrm} {vra} {vrr} {br} {be} {trl} {vmy} {cf} {lr}".format(
+                    ep=ep_s,
+                    vrm=fmt(val_rel_mse_combined),
+                    vra=fmt(x_rel[1]),
+                    vrr=fmt(x_rel[2]),
+                    br=fmt(best_rel_rmse),
+                    be=be_s,
+                    trl=fmt(train_rel_loss),
+                    vmy=fmt(val_mse_y01),
+                    cf=fmt(va_clip_frac),
+                    lr=fmt(lr_now),
                 )
-            else:
-                print(
-                    "{ep} {vrm} {vra} {vrr} {br} {be} {trl} {vmy} {cf} {lr}".format(
-                        ep=ep_s,
-                        vrm=fmt(val_rel_mse_combined),
-                        vra=fmt(x_rel[1]),
-                        vrr=fmt(x_rel[2]),
-                        br=fmt(best_rel_rmse),
-                        be=be_s,
-                        trl=fmt(train_rel_loss),
-                        vmy=fmt(val_mse_y01),
-                        cf=fmt(va_clip_frac),
-                        lr=fmt(lr_now),
-                    )
-                )
+            )
 
             if checkpoint_every and checkpoint_every > 0 and (ep % checkpoint_every == 0):
                 ckpt_path = os.path.join(
@@ -1141,634 +959,6 @@ def train_regressor(
     )
     x_stats = {k: v.detach().cpu().to(torch.float32) for k, v in x_stats.items()}
     y_stats = {k: v.detach().cpu().to(torch.float32) for k, v in y_stats.items()}
-    if return_model_on_cpu:
-        model = model.to(device="cpu", dtype=torch.float32)
-    return model, ft_stats, x_stats, y_stats, device
-
-
-def _prepare_solver_features(
-    X_raw: torch.Tensor,
-    *,
-    q_idx: int,
-    s_idx: int,
-    pos_log10_ratio_thresh: float,
-    neg_frac_tol: float,
-    min_pos_count: int,
-    force_kind: Optional[Dict[int, int]],
-    verbose_transforms: bool,
-    robust_mm_qlo: float,
-    robust_mm_qhi: float,
-) -> tuple[
-    FeatureTransformStats,
-    Dict[str, torch.Tensor],
-    torch.Tensor,
-    torch.Tensor,
-    float,
-    float,
-]:
-    ft_stats = fit_feature_transform(
-        X_raw,
-        pos_log10_ratio_thresh=pos_log10_ratio_thresh,
-        eps=1e-30,
-        neg_frac_tol=neg_frac_tol,
-        min_pos_count=min_pos_count,
-        force_kind=force_kind,
-        verbose=verbose_transforms,
-    )
-    ft_stats.q_idx = int(q_idx)
-    ft_stats.s_idx = int(s_idx)
-    Xt = apply_feature_transform(X_raw, ft_stats)
-    mm_stats = fit_robust_minmax(Xt, q_lo=robust_mm_qlo, q_hi=robust_mm_qhi)
-    X01, clip_frac = apply_robust_minmax(Xt, mm_stats)
-    x_std_stats = fit_standardizer(Xt)
-    x_stats: Dict[str, torch.Tensor] = {
-        "lo": mm_stats["lo"].detach().cpu().to(torch.float32),
-        "hi": mm_stats["hi"].detach().cpu().to(torch.float32),
-        "invrng": mm_stats["invrng"].detach().cpu().to(torch.float32),
-        "mean": x_std_stats["mean"].detach().cpu().to(torch.float32),
-        "std": x_std_stats["std"].detach().cpu().to(torch.float32),
-        "invstd": x_std_stats["invstd"].detach().cpu().to(torch.float32),
-    }
-    return ft_stats, x_stats, Xt, X01, float(clip_frac), float(clip_frac)
-
-
-def train_solver_region(
-    dataset: Dict[str, Any],
-    *,
-    hidden_dim: int = 3,
-    n_hidden: int = 3,
-    lr: float = 5e-4,
-    epochs: int = 2000,
-    batch_size: int = 4096,
-    val_frac: float = 0.2,
-    seed: int = 0,
-    patience: int = 250,
-    min_delta: float = 0.0,
-    weight_decay: float = 1e-6,
-    grad_clip_norm: Optional[float] = 1.0,
-    return_model_on_cpu: bool = True,
-    log_path: str = "training_log.txt",
-    pos_log10_ratio_thresh: float = 1e3,
-    robust_mm_qlo: float = 0.001,
-    robust_mm_qhi: float = 0.999,
-    neg_frac_tol: float = 1e-4,
-    min_pos_count: int = 256,
-    force_kind: Optional[Dict[int, int]] = None,
-    y_eps: float = 1e-7,
-    q_idx: int = 0,
-    s_idx: int = 2,
-    checkpoint_every: int = 200,
-    checkpoint_dir: str = "checkpoints",
-    checkpoint_prefix: str = "solver_region",
-    verbose_transforms: bool = True,
-    **_ignored,
-):
-    torch.set_default_dtype(torch.float32)
-    torch.manual_seed(seed)
-    random.seed(seed)
-    device = pick_device()
-
-    X_raw = torch.tensor(dataset["X"], dtype=torch.float32)
-    y_grid = torch.tensor(dataset["y_grid"], dtype=torch.float32)
-    robust_mask = torch.tensor(dataset["y_robust_mask"], dtype=torch.bool)
-    fast_mask = torch.tensor(dataset["y_fast_mask"], dtype=torch.bool)
-    sample_weight = torch.tensor(dataset["sample_weight"], dtype=torch.float32)
-    y_exact = torch.tensor(dataset["y_exact"], dtype=torch.float32).reshape(-1, 1)
-
-    N = int(X_raw.shape[0])
-    n_val = max(1, min(int(val_frac * N), N - 1))
-    gen = torch.Generator().manual_seed(seed)
-    perm = torch.randperm(N, generator=gen)
-    perm_hash = hashlib.sha1(perm.cpu().numpy().tobytes()).hexdigest()[:16]
-    val_idx = perm[:n_val]
-    tr_idx = perm[n_val:]
-
-    Xtr_raw = X_raw[tr_idx]
-    Xva_raw = X_raw[val_idx]
-    ytr_exact = y_exact[tr_idx]
-    yva_exact = y_exact[val_idx]
-    robust_tr = robust_mask[tr_idx]
-    robust_va = robust_mask[val_idx]
-    fast_tr = fast_mask[tr_idx]
-    fast_va = fast_mask[val_idx]
-    w_tr = sample_weight[tr_idx]
-    w_va = sample_weight[val_idx]
-
-    ft_stats = fit_feature_transform(
-        Xtr_raw,
-        pos_log10_ratio_thresh=pos_log10_ratio_thresh,
-        eps=1e-30,
-        neg_frac_tol=neg_frac_tol,
-        min_pos_count=min_pos_count,
-        force_kind=force_kind,
-        verbose=verbose_transforms,
-    )
-    ft_stats.q_idx = int(q_idx)
-    ft_stats.s_idx = int(s_idx)
-    Xtr_t = apply_feature_transform(Xtr_raw, ft_stats)
-    Xva_t = apply_feature_transform(Xva_raw, ft_stats)
-    mm_stats = fit_robust_minmax(Xtr_t, q_lo=robust_mm_qlo, q_hi=robust_mm_qhi)
-    Xtr01, tr_clip_frac = apply_robust_minmax(Xtr_t, mm_stats)
-    Xva01, va_clip_frac = apply_robust_minmax(Xva_t, mm_stats)
-    x_std_stats = fit_standardizer(Xtr_t)
-    x_stats: Dict[str, torch.Tensor] = {
-        "lo": mm_stats["lo"].detach().cpu().to(torch.float32),
-        "hi": mm_stats["hi"].detach().cpu().to(torch.float32),
-        "invrng": mm_stats["invrng"].detach().cpu().to(torch.float32),
-        "mean": x_std_stats["mean"].detach().cpu().to(torch.float32),
-        "std": x_std_stats["std"].detach().cpu().to(torch.float32),
-        "invstd": x_std_stats["invstd"].detach().cpu().to(torch.float32),
-    }
-    y_stats: Dict[str, torch.Tensor] = {
-        "mean": ytr_exact.mean(dim=0).detach().cpu().to(torch.float32),
-        "std": ytr_exact.std(dim=0, unbiased=False).detach().cpu().to(torch.float32),
-        "invstd": torch.where(
-            ytr_exact.std(dim=0, unbiased=False) < 1e-8,
-            torch.ones_like(ytr_exact.std(dim=0, unbiased=False)),
-            1.0 / ytr_exact.std(dim=0, unbiased=False),
-        ).detach().cpu().to(torch.float32),
-        "out_kind": torch.tensor([OUT_KIND_X_BOUNDED], dtype=torch.int32),
-        "out_lo": torch.zeros(1, dtype=torch.float32),
-        "out_hi": torch.ones(1, dtype=torch.float32),
-        "out_invrng": torch.ones(1, dtype=torch.float32),
-        "y_eps": torch.tensor(float(y_eps), dtype=torch.float32),
-        "width_tiny": torch.tensor(1.0e-12, dtype=torch.float32),
-        "robust_mm_qlo": torch.tensor(float(robust_mm_qlo), dtype=torch.float32),
-        "robust_mm_qhi": torch.tensor(float(robust_mm_qhi), dtype=torch.float32),
-        "pos_log10_ratio_thresh": torch.tensor(float(pos_log10_ratio_thresh), dtype=torch.float32),
-        "neg_frac_tol": torch.tensor(float(neg_frac_tol), dtype=torch.float32),
-        "min_pos_count": torch.tensor(float(min_pos_count), dtype=torch.float32),
-        "dropped_invalid_width_rows": torch.tensor(0.0, dtype=torch.float32),
-        "rel_denom_eps": torch.tensor(1.0e-12, dtype=torch.float32),
-        "solver_target_mode": torch.tensor(1.0, dtype=torch.float32),
-    }
-
-    Xtr01 = Xtr01.to(device)
-    Xva01 = Xva01.to(device)
-    robust_tr = robust_tr.to(device)
-    robust_va = robust_va.to(device)
-    fast_tr = fast_tr.to(device)
-    fast_va = fast_va.to(device)
-    w_tr = w_tr.to(device)
-    w_va = w_va.to(device)
-    y_grid_dev = y_grid.to(device)
-    ytr_exact = ytr_exact.to(device)
-    yva_exact = yva_exact.to(device)
-
-    model = TinyMLP_Logit(
-        in_dim=Xtr01.shape[1],
-        hidden_dim=hidden_dim,
-        n_hidden=n_hidden,
-        out_dim=1,
-    ).to(device=device, dtype=torch.float32)
-    if device.type == "cuda":
-        try:
-            model = torch.compile(model)
-            print("Enabled torch.compile(model)")
-        except Exception as exc:
-            print(f"Note: torch.compile unavailable/failed ({exc}); continuing without it.")
-
-    opt = torch.optim.AdamW(model.parameters(), lr=lr, weight_decay=weight_decay)
-    scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
-        opt, mode="min", factor=0.5, patience=25, threshold=1e-6, threshold_mode="rel", min_lr=1e-6
-    )
-
-    best_val = float("inf")
-    best_epoch = 0
-    best_state = None
-    bad = 0
-    os.makedirs(checkpoint_dir, exist_ok=True)
-    Ntr = int(Xtr01.shape[0])
-    bs = min(max(1, int(batch_size)), Ntr)
-
-    with open(log_path, "w", encoding="utf-8") as flog:
-        flog.write("# epoch val_region_loss best_val best_epoch train_region_loss val_hit_robust val_hit_fast lr\n")
-        print("# epoch val_region_loss best_val best_epoch train_region_loss val_hit_robust val_hit_fast lr")
-        for ep in range(1, epochs + 1):
-            model.train()
-            perm_tr = torch.randperm(Ntr, device=Xtr01.device)
-            loss_sum = torch.zeros((), device=device)
-            n_batches = 0
-            for start in range(0, Ntr, bs):
-                idx = perm_tr[start : start + bs]
-                opt.zero_grad(set_to_none=True)
-                y_pred = torch.sigmoid(model(Xtr01[idx])).to(torch.float32)
-                loss = region_distance_loss(
-                    y_pred,
-                    y_grid_dev,
-                    robust_tr[idx],
-                    fast_tr[idx],
-                    w_tr[idx],
-                )
-                loss.backward()
-                if grad_clip_norm is not None:
-                    torch.nn.utils.clip_grad_norm_(model.parameters(), float(grad_clip_norm))
-                opt.step()
-                loss_sum += loss.detach()
-                n_batches += 1
-
-            train_loss = float((loss_sum / max(1, n_batches)).item())
-            model.eval()
-            with torch.no_grad():
-                yva_pred = torch.sigmoid(model(Xva01)).to(torch.float32)
-                val_loss = float(
-                    region_distance_loss(
-                        yva_pred, y_grid_dev, robust_va, fast_va, w_va
-                    ).item()
-                )
-                val_hit_robust = y01_to_region_hit_rate(yva_pred, y_grid_dev, robust_va)
-                val_hit_fast = y01_to_region_hit_rate(yva_pred, y_grid_dev, fast_va)
-                val_y_mae = float((yva_pred - yva_exact).abs().mean().item())
-
-            scheduler.step(val_loss)
-            improved = (best_val - val_loss) > float(min_delta)
-            if improved:
-                best_val = val_loss
-                best_epoch = ep
-                best_state = {k: v.detach().cpu().clone() for k, v in model.state_dict().items()}
-                bad = 0
-            else:
-                bad += 1
-
-            lr_now = float(opt.param_groups[0].get("lr", lr))
-            ep_s = f"{ep:05d}"
-            line = (
-                f"{ep_s} {val_loss:.6e} {best_val:.6e} {best_epoch:05d} "
-                f"{train_loss:.6e} {val_hit_robust:.6e} {val_hit_fast:.6e} {lr_now:.6e}\n"
-            )
-            flog.write(line)
-            if ep == 1 or (ep % 10 == 0):
-                flog.flush()
-            print(line.strip())
-
-            if checkpoint_every and checkpoint_every > 0 and (ep % checkpoint_every == 0):
-                ckpt_path = os.path.join(checkpoint_dir, f"{checkpoint_prefix}_ep{ep:05d}.pt")
-                torch.save(
-                    {
-                        "epoch": ep,
-                        "best_epoch": best_epoch,
-                        "best_region_loss": best_val,
-                        "perm_sha1_16": perm_hash,
-                        "model_state_dict": {k: v.detach().cpu() for k, v in model.state_dict().items()},
-                        "best_model_state_dict": best_state,
-                        "x_stats": {k: v.detach().cpu().to(torch.float32) for k, v in x_stats.items()},
-                        "y_stats": {k: v.detach().cpu().to(torch.float32) for k, v in y_stats.items()},
-                        "ft_stats": {
-                            "kind": ft_stats.kind.detach().cpu().to(torch.int32),
-                            "eps": float(ft_stats.eps),
-                            "q_idx": int(ft_stats.q_idx),
-                            "s_idx": int(ft_stats.s_idx),
-                        },
-                        "val_y_mae": val_y_mae,
-                    },
-                    ckpt_path,
-                )
-                print(f"[checkpoint] wrote {ckpt_path}")
-
-            if bad >= patience:
-                break
-
-    if best_state is not None:
-        model.load_state_dict(best_state)
-    if return_model_on_cpu:
-        model = model.to(device="cpu", dtype=torch.float32)
-    return model, ft_stats, x_stats, y_stats, device
-
-
-def train_solver_soft_bins(
-    dataset: Dict[str, Any],
-    *,
-    hidden_dim: int = 3,
-    n_hidden: int = 3,
-    lr: float = 5e-4,
-    epochs: int = 2000,
-    batch_size: int = 4096,
-    val_frac: float = 0.2,
-    seed: int = 0,
-    patience: int = 250,
-    min_delta: float = 0.0,
-    weight_decay: float = 1e-6,
-    grad_clip_norm: Optional[float] = 1.0,
-    return_model_on_cpu: bool = True,
-    log_path: str = "training_log.txt",
-    pos_log10_ratio_thresh: float = 1e3,
-    robust_mm_qlo: float = 0.001,
-    robust_mm_qhi: float = 0.999,
-    neg_frac_tol: float = 1e-4,
-    min_pos_count: int = 256,
-    force_kind: Optional[Dict[int, int]] = None,
-    q_idx: int = 0,
-    s_idx: int = 2,
-    verbose_transforms: bool = True,
-    **_ignored,
-):
-    torch.set_default_dtype(torch.float32)
-    torch.manual_seed(seed)
-    random.seed(seed)
-    device = pick_device()
-
-    X_raw = torch.tensor(dataset["X"], dtype=torch.float32)
-    y_grid = torch.tensor(dataset["y_grid"], dtype=torch.float32)
-    soft_prob = torch.tensor(dataset["soft_prob"], dtype=torch.float32)
-    sample_weight = torch.tensor(dataset["sample_weight"], dtype=torch.float32)
-
-    N = int(X_raw.shape[0])
-    n_val = max(1, min(int(val_frac * N), N - 1))
-    gen = torch.Generator().manual_seed(seed)
-    perm = torch.randperm(N, generator=gen)
-    val_idx = perm[:n_val]
-    tr_idx = perm[n_val:]
-
-    Xtr_raw = X_raw[tr_idx]
-    Xva_raw = X_raw[val_idx]
-    ptr = soft_prob[tr_idx]
-    pva = soft_prob[val_idx]
-    wtr = sample_weight[tr_idx]
-    wva = sample_weight[val_idx]
-
-    ft_stats = fit_feature_transform(
-        Xtr_raw,
-        pos_log10_ratio_thresh=pos_log10_ratio_thresh,
-        eps=1e-30,
-        neg_frac_tol=neg_frac_tol,
-        min_pos_count=min_pos_count,
-        force_kind=force_kind,
-        verbose=verbose_transforms,
-    )
-    ft_stats.q_idx = int(q_idx)
-    ft_stats.s_idx = int(s_idx)
-    Xtr_t = apply_feature_transform(Xtr_raw, ft_stats)
-    Xva_t = apply_feature_transform(Xva_raw, ft_stats)
-    mm_stats = fit_robust_minmax(Xtr_t, q_lo=robust_mm_qlo, q_hi=robust_mm_qhi)
-    Xtr01, _ = apply_robust_minmax(Xtr_t, mm_stats)
-    Xva01, _ = apply_robust_minmax(Xva_t, mm_stats)
-    x_std_stats = fit_standardizer(Xtr_t)
-    x_stats: Dict[str, torch.Tensor] = {
-        "lo": mm_stats["lo"].detach().cpu().to(torch.float32),
-        "hi": mm_stats["hi"].detach().cpu().to(torch.float32),
-        "invrng": mm_stats["invrng"].detach().cpu().to(torch.float32),
-        "mean": x_std_stats["mean"].detach().cpu().to(torch.float32),
-        "std": x_std_stats["std"].detach().cpu().to(torch.float32),
-        "invstd": x_std_stats["invstd"].detach().cpu().to(torch.float32),
-    }
-    y_stats: Dict[str, torch.Tensor] = {
-        "mean": ptr.mean(dim=0).detach().cpu().to(torch.float32),
-        "std": ptr.std(dim=0, unbiased=False).detach().cpu().to(torch.float32),
-        "invstd": torch.ones(ptr.shape[1], dtype=torch.float32),
-        "out_kind": torch.full((ptr.shape[1],), OUT_KIND_LINEAR, dtype=torch.int32),
-        "out_lo": torch.zeros(ptr.shape[1], dtype=torch.float32),
-        "out_hi": torch.ones(ptr.shape[1], dtype=torch.float32),
-        "out_invrng": torch.ones(ptr.shape[1], dtype=torch.float32),
-        "solver_soft_bins": torch.tensor(1.0, dtype=torch.float32),
-        "solver_y_grid": y_grid.detach().cpu().to(torch.float32),
-    }
-
-    Xtr01 = Xtr01.to(device)
-    Xva01 = Xva01.to(device)
-    ptr = ptr.to(device)
-    pva = pva.to(device)
-    wtr = wtr.to(device)
-    wva = wva.to(device)
-
-    model = TinyMLP_Logit(
-        in_dim=Xtr01.shape[1],
-        hidden_dim=hidden_dim,
-        n_hidden=n_hidden,
-        out_dim=int(ptr.shape[1]),
-    ).to(device=device, dtype=torch.float32)
-    opt = torch.optim.AdamW(model.parameters(), lr=lr, weight_decay=weight_decay)
-    scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
-        opt, mode="min", factor=0.5, patience=25, threshold=1e-6, threshold_mode="rel", min_lr=1e-6
-    )
-
-    best_val = float("inf")
-    best_state = None
-    best_epoch = 0
-    bad = 0
-    Ntr = int(Xtr01.shape[0])
-    bs = min(max(1, int(batch_size)), Ntr)
-    with open(log_path, "w", encoding="utf-8") as flog:
-        flog.write("# epoch val_soft_ce best_val best_epoch train_soft_ce val_top1_acc lr\n")
-        print("# epoch val_soft_ce best_val best_epoch train_soft_ce val_top1_acc lr")
-        for ep in range(1, epochs + 1):
-            model.train()
-            perm_tr = torch.randperm(Ntr, device=Xtr01.device)
-            loss_sum = torch.zeros((), device=device)
-            n_batches = 0
-            for start in range(0, Ntr, bs):
-                idx = perm_tr[start : start + bs]
-                opt.zero_grad(set_to_none=True)
-                logits = model(Xtr01[idx]).to(torch.float32)
-                loss = soft_target_cross_entropy(logits, ptr[idx], wtr[idx])
-                loss.backward()
-                if grad_clip_norm is not None:
-                    torch.nn.utils.clip_grad_norm_(model.parameters(), float(grad_clip_norm))
-                opt.step()
-                loss_sum += loss.detach()
-                n_batches += 1
-
-            train_loss = float((loss_sum / max(1, n_batches)).item())
-            model.eval()
-            with torch.no_grad():
-                logits_va = model(Xva01).to(torch.float32)
-                val_loss = float(soft_target_cross_entropy(logits_va, pva, wva).item())
-                pred_idx = torch.argmax(logits_va, dim=1)
-                true_idx = torch.argmax(pva, dim=1)
-                val_top1_acc = float((pred_idx == true_idx).float().mean().item())
-            scheduler.step(val_loss)
-            improved = (best_val - val_loss) > float(min_delta)
-            if improved:
-                best_val = val_loss
-                best_epoch = ep
-                best_state = {k: v.detach().cpu().clone() for k, v in model.state_dict().items()}
-                bad = 0
-            else:
-                bad += 1
-            lr_now = float(opt.param_groups[0].get("lr", lr))
-            line = (
-                f"{ep:05d} {val_loss:.6e} {best_val:.6e} {best_epoch:05d} "
-                f"{train_loss:.6e} {val_top1_acc:.6e} {lr_now:.6e}\n"
-            )
-            flog.write(line)
-            if ep == 1 or (ep % 10 == 0):
-                flog.flush()
-            print(line.strip())
-            if bad >= patience:
-                break
-
-    if best_state is not None:
-        model.load_state_dict(best_state)
-    if return_model_on_cpu:
-        model = model.to(device="cpu", dtype=torch.float32)
-    return model, ft_stats, x_stats, y_stats, device
-
-
-def train_solver_gate(
-    dataset: Dict[str, Any],
-    *,
-    hidden_dim: int = 3,
-    n_hidden: int = 3,
-    lr: float = 5e-4,
-    epochs: int = 2000,
-    batch_size: int = 4096,
-    val_frac: float = 0.2,
-    seed: int = 0,
-    patience: int = 250,
-    min_delta: float = 0.0,
-    weight_decay: float = 1e-6,
-    grad_clip_norm: Optional[float] = 1.0,
-    return_model_on_cpu: bool = True,
-    log_path: str = "training_log.txt",
-    pos_log10_ratio_thresh: float = 1e3,
-    robust_mm_qlo: float = 0.001,
-    robust_mm_qhi: float = 0.999,
-    neg_frac_tol: float = 1e-4,
-    min_pos_count: int = 256,
-    force_kind: Optional[Dict[int, int]] = None,
-    q_idx: int = 0,
-    s_idx: int = 2,
-    verbose_transforms: bool = True,
-    **_ignored,
-):
-    torch.set_default_dtype(torch.float32)
-    torch.manual_seed(seed)
-    random.seed(seed)
-    device = pick_device()
-
-    X_raw = torch.tensor(dataset["X"], dtype=torch.float32)
-    gate_target = torch.tensor(dataset["gate_target"], dtype=torch.float32).reshape(-1, 1)
-    sample_weight = torch.tensor(dataset["sample_weight"], dtype=torch.float32).reshape(-1, 1)
-
-    N = int(X_raw.shape[0])
-    n_val = max(1, min(int(val_frac * N), N - 1))
-    gen = torch.Generator().manual_seed(seed)
-    perm = torch.randperm(N, generator=gen)
-    val_idx = perm[:n_val]
-    tr_idx = perm[n_val:]
-
-    Xtr_raw = X_raw[tr_idx]
-    Xva_raw = X_raw[val_idx]
-    ytr = gate_target[tr_idx]
-    yva = gate_target[val_idx]
-    wtr = sample_weight[tr_idx]
-    wva = sample_weight[val_idx]
-
-    ft_stats = fit_feature_transform(
-        Xtr_raw,
-        pos_log10_ratio_thresh=pos_log10_ratio_thresh,
-        eps=1e-30,
-        neg_frac_tol=neg_frac_tol,
-        min_pos_count=min_pos_count,
-        force_kind=force_kind,
-        verbose=verbose_transforms,
-    )
-    ft_stats.q_idx = int(q_idx)
-    ft_stats.s_idx = int(s_idx)
-    Xtr_t = apply_feature_transform(Xtr_raw, ft_stats)
-    Xva_t = apply_feature_transform(Xva_raw, ft_stats)
-    mm_stats = fit_robust_minmax(Xtr_t, q_lo=robust_mm_qlo, q_hi=robust_mm_qhi)
-    Xtr01, _ = apply_robust_minmax(Xtr_t, mm_stats)
-    Xva01, _ = apply_robust_minmax(Xva_t, mm_stats)
-    x_std_stats = fit_standardizer(Xtr_t)
-    x_stats: Dict[str, torch.Tensor] = {
-        "lo": mm_stats["lo"].detach().cpu().to(torch.float32),
-        "hi": mm_stats["hi"].detach().cpu().to(torch.float32),
-        "invrng": mm_stats["invrng"].detach().cpu().to(torch.float32),
-        "mean": x_std_stats["mean"].detach().cpu().to(torch.float32),
-        "std": x_std_stats["std"].detach().cpu().to(torch.float32),
-        "invstd": x_std_stats["invstd"].detach().cpu().to(torch.float32),
-    }
-    y_stats: Dict[str, torch.Tensor] = {
-        "mean": ytr.mean(dim=0).detach().cpu().to(torch.float32),
-        "std": ytr.std(dim=0, unbiased=False).detach().cpu().to(torch.float32),
-        "invstd": torch.ones(1, dtype=torch.float32),
-        "out_kind": torch.tensor([OUT_KIND_LINEAR], dtype=torch.int32),
-        "out_lo": torch.zeros(1, dtype=torch.float32),
-        "out_hi": torch.ones(1, dtype=torch.float32),
-        "out_invrng": torch.ones(1, dtype=torch.float32),
-        "solver_gate": torch.tensor(1.0, dtype=torch.float32),
-    }
-
-    Xtr01 = Xtr01.to(device)
-    Xva01 = Xva01.to(device)
-    ytr = ytr.to(device)
-    yva = yva.to(device)
-    wtr = wtr.to(device)
-    wva = wva.to(device)
-
-    model = TinyMLP_Logit(
-        in_dim=Xtr01.shape[1],
-        hidden_dim=hidden_dim,
-        n_hidden=n_hidden,
-        out_dim=1,
-    ).to(device=device, dtype=torch.float32)
-    opt = torch.optim.AdamW(model.parameters(), lr=lr, weight_decay=weight_decay)
-    scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
-        opt, mode="min", factor=0.5, patience=25, threshold=1e-6, threshold_mode="rel", min_lr=1e-6
-    )
-
-    best_val = float("inf")
-    best_state = None
-    best_epoch = 0
-    bad = 0
-    Ntr = int(Xtr01.shape[0])
-    bs = min(max(1, int(batch_size)), Ntr)
-    with open(log_path, "w", encoding="utf-8") as flog:
-        flog.write("# epoch val_bce best_val best_epoch train_bce val_acc lr\n")
-        print("# epoch val_bce best_val best_epoch train_bce val_acc lr")
-        for ep in range(1, epochs + 1):
-            model.train()
-            perm_tr = torch.randperm(Ntr, device=Xtr01.device)
-            loss_sum = torch.zeros((), device=device)
-            n_batches = 0
-            for start in range(0, Ntr, bs):
-                idx = perm_tr[start : start + bs]
-                opt.zero_grad(set_to_none=True)
-                logits = model(Xtr01[idx]).to(torch.float32)
-                loss_raw = torch.nn.functional.binary_cross_entropy_with_logits(
-                    logits, ytr[idx], reduction="none"
-                )
-                loss = (loss_raw * wtr[idx]).sum() / torch.clamp(wtr[idx].sum(), min=1.0)
-                loss.backward()
-                if grad_clip_norm is not None:
-                    torch.nn.utils.clip_grad_norm_(model.parameters(), float(grad_clip_norm))
-                opt.step()
-                loss_sum += loss.detach()
-                n_batches += 1
-
-            train_loss = float((loss_sum / max(1, n_batches)).item())
-            model.eval()
-            with torch.no_grad():
-                logits_va = model(Xva01).to(torch.float32)
-                loss_raw = torch.nn.functional.binary_cross_entropy_with_logits(
-                    logits_va, yva, reduction="none"
-                )
-                val_loss = float((loss_raw * wva).sum().item() / max(1.0, float(wva.sum().item())))
-                pred = (torch.sigmoid(logits_va) >= 0.5).to(torch.float32)
-                val_acc = float((pred == yva).float().mean().item())
-            scheduler.step(val_loss)
-            improved = (best_val - val_loss) > float(min_delta)
-            if improved:
-                best_val = val_loss
-                best_epoch = ep
-                best_state = {k: v.detach().cpu().clone() for k, v in model.state_dict().items()}
-                bad = 0
-            else:
-                bad += 1
-            lr_now = float(opt.param_groups[0].get("lr", lr))
-            line = (
-                f"{ep:05d} {val_loss:.6e} {best_val:.6e} {best_epoch:05d} "
-                f"{train_loss:.6e} {val_acc:.6e} {lr_now:.6e}\n"
-            )
-            flog.write(line)
-            if ep == 1 or (ep % 10 == 0):
-                flog.flush()
-            print(line.strip())
-            if bad >= patience:
-                break
-
-    if best_state is not None:
-        model.load_state_dict(best_state)
     if return_model_on_cpu:
         model = model.to(device="cpu", dtype=torch.float32)
     return model, ft_stats, x_stats, y_stats, device
@@ -1883,7 +1073,7 @@ def export_to_c_header(
     if int(model.out_dim) == 1:
         header.append("// Model: logit -> sigmoid -> bounded x (Palenzuela lower-bound correction)\n")
     elif int(model.out_dim) == 3:
-        header.append("// Model: logit -> sigmoid -> log-scaled (rho, T, W)\n")
+        header.append("// Model: logit -> sigmoid -> out_dim=3\n")
     else:
         header.append(f"// Model: logit -> sigmoid -> out_dim={int(model.out_dim)}\n")
     if EXPORT_USE_INCLUDE_GUARD:
@@ -2095,71 +1285,39 @@ def train_on_dataset(
             print(f"No embedded neural-network data found in {eos_path}.")
     torch.set_float32_matmul_precision(matmul_precision)
 
-    if target_mode == "solver_region":
-        dataset = read_solver_label_dataset(dataset_path, target_mode=target_mode)
-        model, ft_stats, x_stats, y_stats, device = train_solver_region(
-            dataset,
-            **train_kwargs,
-        )
-    elif target_mode == "solver_soft_bins":
-        if append_to_eos or register_installed_model:
-            raise ValueError(
-                "solver_soft_bins is a Python-only training mode for now. "
-                "Use --append_eos no and --register_installed_model no."
-            )
-        dataset = read_solver_label_dataset(dataset_path, target_mode=target_mode)
-        model, ft_stats, x_stats, y_stats, device = train_solver_soft_bins(
-            dataset,
-            **train_kwargs,
-        )
-    elif target_mode == "solver_gate":
-        if append_to_eos or register_installed_model:
-            raise ValueError(
-                "solver_gate is a Python-only training mode for now. "
-                "Use --append_eos no and --register_installed_model no."
-            )
-        dataset = read_solver_label_dataset(dataset_path, target_mode=target_mode)
-        model, ft_stats, x_stats, y_stats, device = train_solver_gate(
-            dataset,
-            **train_kwargs,
-        )
-    else:
-        data_np = read_training_dataset(dataset_path, target_mode=target_mode)
-        model, ft_stats, x_stats, y_stats, device = train_regressor(
-            data_np,
-            target_mode=target_mode,
-            **train_kwargs,
-        )
+    data_np = read_training_dataset(dataset_path, target_mode=target_mode)
+    model, ft_stats, x_stats, y_stats, device = train_regressor(
+        data_np,
+        target_mode=target_mode,
+        **train_kwargs,
+    )
 
     if bundle_path is not None:
         save_inference_bundle(str(bundle_path), model, ft_stats, x_stats, y_stats)
 
-    if target_mode not in ("solver_soft_bins", "solver_gate"):
-        export_to_hdf5(model, ft_stats, x_stats, y_stats, str(hdf5_path), eos_path=eos_path)
-        if header_path is not None:
-            export_to_c_header(model, ft_stats, x_stats, y_stats, str(header_path))
-        if append_to_eos:
-            summary = append_nn_to_eos_file(eos_path, hdf5_path, overwrite=overwrite_eos_nn)
-            action = "Overwrote" if summary["overwrite_performed"] else "Appended"
-            print(f"{action} neural-network data into EOS file: {summary['eos_filename']}")
-            print(
-                "Embedded network summary: "
-                f"hidden_layers={summary.get('n_hidden')} "
-                f"hidden_dim={summary.get('hidden_dim')} "
-                f"group={summary['group_name']} "
-                f"added_utc={summary.get('embedded_utc', 'unknown')}"
+    export_to_hdf5(model, ft_stats, x_stats, y_stats, str(hdf5_path), eos_path=eos_path)
+    if header_path is not None:
+        export_to_c_header(model, ft_stats, x_stats, y_stats, str(header_path))
+    if append_to_eos:
+        summary = append_nn_to_eos_file(eos_path, hdf5_path, overwrite=overwrite_eos_nn)
+        action = "Overwrote" if summary["overwrite_performed"] else "Appended"
+        print(f"{action} neural-network data into EOS file: {summary['eos_filename']}")
+        print(
+            "Embedded network summary: "
+            f"hidden_layers={summary.get('n_hidden')} "
+            f"hidden_dim={summary.get('hidden_dim')} "
+            f"group={summary['group_name']} "
+            f"added_utc={summary.get('embedded_utc', 'unknown')}"
+        )
+    if register_installed_model and eos_path is not None:
+        try:
+            installed_path = install_nn_model(
+                hdf5_path,
+                overwrite=overwrite_installed_model,
             )
-        if register_installed_model and eos_path is not None:
-            try:
-                installed_path = install_nn_model(
-                    hdf5_path,
-                    overwrite=overwrite_installed_model,
-                )
-                print(f"Registered installed NN model: {installed_path}")
-            except Exception as exc:
-                print(f"Warning: could not register installed NN model: {exc}")
-    else:
-        print(f"Skipped HDF5/header/EOS export for {target_mode}; bundle export is available.")
+            print(f"Registered installed NN model: {installed_path}")
+        except Exception as exc:
+            print(f"Warning: could not register installed NN model: {exc}")
     return model, ft_stats, x_stats, y_stats, device
 
 
@@ -2179,7 +1337,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--checkpoint_every", type=int, default=200)
     parser.add_argument("--checkpoint_prefix", default="tiny_mlp")
     parser.add_argument("--hidden_dim", type=int, default=3)
-    parser.add_argument("--n_hidden", type=int, default=3)
+    parser.add_argument("--n_hidden", type=int, default=2)
     parser.add_argument("--learning_rate", type=float, default=5e-4)
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--append_eos", choices=("yes", "no"), default="yes")
@@ -2189,14 +1347,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--dataset_n_pts", type=int, default=16)
     parser.add_argument(
         "--target_mode",
-        choices=(
-            "x_correction",
-            "x_best_correction",
-            "rho_T_W",
-            "solver_region",
-            "solver_soft_bins",
-            "solver_gate",
-        ),
+        choices=("x_correction", "x_best_correction"),
         default="x_correction",
     )
     return parser
@@ -2210,10 +1361,6 @@ def main() -> int:
     autogenerated_dataset: Path | None = None
     try:
         if dataset_path is None:
-            if args.target_mode in ("solver_region", "solver_soft_bins", "solver_gate"):
-                raise ValueError(
-                    f"target_mode {args.target_mode!r} requires an explicit solver label dataset path."
-                )
             fd, temp_name = tempfile.mkstemp(
                 prefix=f"grhayl_nn_training_{args.eos_file.stem}_",
                 suffix=".bin",

@@ -40,12 +40,11 @@ class NNGuessInput:
 @dataclass(frozen=True)
 class NNGuess:
     x: float
-    W: float
 
 
 def guess(eos: _pyghl.TabulatedEOS, q: float, r: float, s: float, t: float) -> NNGuess:
-    x, W = _pyghl.nn_c2p_guess(eos, float(q), float(r), float(s), float(t))
-    return NNGuess(x=float(x), W=float(W))
+    x = _pyghl.nn_c2p_guess(eos, float(q), float(r), float(s), float(t))
+    return NNGuess(x=float(x))
 
 
 def guess_x(eos: _pyghl.TabulatedEOS, q: float, r: float, s: float, t: float) -> float:
@@ -80,11 +79,9 @@ def nn_initial_guess(
     x_hi = 2.0 + 2.0 * q - s
     x = min(max(x, x_lo), x_hi)
 
-    W = nn_guess.W
-    if not (W > 0.0 and math.isfinite(W)):
-        Wminus2 = 1.0 - (x * x * r + (2.0 * x + s) * t * t) / (x * x * (x + s) * (x + s))
-        Wminus2 = min(max(Wminus2, params.max_lorentz_factor**-2), 1.0)
-        W = Wminus2**-0.5
+    Wminus2 = 1.0 - (x * x * r + (2.0 * x + s) * t * t) / (x * x * (x + s) * (x + s))
+    Wminus2 = min(max(Wminus2, params.max_lorentz_factor**-2), 1.0)
+    W = Wminus2**-0.5
 
     prims.rho = cons_undens.rho / W
     prims.Y_e = cons_undens.Y_e / cons_undens.rho

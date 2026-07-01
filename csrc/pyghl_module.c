@@ -1714,23 +1714,11 @@ static PyObject *py_nn_c2p_guess(PyObject *module, PyObject *args) {
   }
   const ghl_nn_c2p_input_t input = { q, r, s, t };
   const ghl_nn_c2p_guess_t guess = ghl_c2p_nn_guess(eos->eos.c2p_nn, input);
-  return Py_BuildValue("(ff)", guess.x, guess.W);
+  return PyFloat_FromDouble((double)guess.x);
 }
 
 static PyObject *py_nn_c2p_guess_x(PyObject *module, PyObject *args) {
-  PyObject *guess = py_nn_c2p_guess(module, args);
-  PyObject *x = NULL;
-  if(guess == NULL) {
-    return NULL;
-  }
-  x = PyTuple_GetItem(guess, 0);
-  if(x == NULL) {
-    Py_DECREF(guess);
-    return NULL;
-  }
-  Py_INCREF(x);
-  Py_DECREF(guess);
-  return x;
+  return py_nn_c2p_guess(module, args);
 }
 
 static PyMethodDef module_methods[] = {
@@ -1781,7 +1769,7 @@ static PyMethodDef module_methods[] = {
    py_tabulated_con2prim_multi_method,
    METH_VARARGS,
    "Run tabulated con2prim using params.main_routine and current primitive guess."},
-  {"nn_c2p_guess", py_nn_c2p_guess, METH_VARARGS, "Predict (x, W) with the embedded NN."},
+  {"nn_c2p_guess", py_nn_c2p_guess, METH_VARARGS, "Predict x with the embedded NN."},
   {"nn_c2p_guess_x", py_nn_c2p_guess_x, METH_VARARGS, "Predict x with the embedded NN."},
   {NULL, NULL, 0, NULL}
 };
