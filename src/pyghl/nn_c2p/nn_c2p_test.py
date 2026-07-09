@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import struct
 import time
 from pathlib import Path
 
@@ -63,6 +64,12 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("dataset", type=Path)
     parser.add_argument("--model", type=Path)
     parser.add_argument("--output", type=Path)
+    parser.add_argument(
+        "--offset",
+        type=int,
+        default=0,
+        help="Number of dataset records to skip before testing.",
+    )
     parser.add_argument("--limit", type=int)
     return parser
 
@@ -72,11 +79,11 @@ def main() -> int:
     output = args.output
 
     params = ghl.initialize_params(
-        main_routine=ghl.C2P_NONE,
+        main_routine=ghl.C2P_NOBLE2D,
         backup_routine=(ghl.C2P_NONE, ghl.C2P_NONE, ghl.C2P_NONE),
         evolve_entropy=False,
         evolve_temp=True,
-        calc_prim_guess=True,
+        calc_prim_guess=False,
         psi6threshold=1e100,
         max_lorentz_factor=100.0,
         lorenz_damping_factor=0.0,
@@ -135,24 +142,32 @@ def main() -> int:
     nn_total_s = 0.0
     with args.dataset.open("rb") as dataset_fp:
         _, _, n_blocks = ghl.nn.read_dataset_header(dataset_fp)
+    if args.offset < 0 or args.offset > n_blocks:
+        raise SystemExit(f"--offset must be in [0, {n_blocks}], got {args.offset}")
+    n_blocks -= args.offset
     if args.limit is not None:
         n_blocks = min(n_blocks, args.limit)
     report_progress_every = max(1, n_blocks // 100) if n_blocks else 1
 
     with output.open("w") as fp:
-        fp.write("# Col. 1: GRHayL - Initial x Error vs. Exact\n")
-        fp.write("# Col. 2: GRHayL - Initial Error vs. Orig\n")
-        fp.write("# Col. 3: GRHayL - Final Error vs. Orig\n")
-        fp.write("# Col. 4: GRHayL - Iterations\n")
-        fp.write("# Col. 5: NN     - Initial x Error vs. Exact\n")
-        fp.write("# Col. 6: NN     - Initial Error vs. Orig\n")
-        fp.write("# Col. 7: NN     - Final Error vs. Orig\n")
-        fp.write("# Col. 8: NN     - Iterations\n")
+        fp.write("# Col. 1: Noble2D default - Initial x Error vs. Exact\n")
+        fp.write("# Col. 2: Noble2D default - Initial Error vs. Orig\n")
+        fp.write("# Col. 3: Noble2D default - Final Error vs. Orig\n")
+        fp.write("# Col. 4: Noble2D default - Iterations\n")
+        fp.write("# Col. 5: Noble2D NN      - Initial x Error vs. Exact\n")
+        fp.write("# Col. 6: Noble2D NN      - Initial Error vs. Orig\n")
+        fp.write("# Col. 7: Noble2D NN      - Final Error vs. Orig\n")
+        fp.write("# Col. 8: Noble2D NN      - Iterations\n")
 
-        for data in ghl.nn.iter_dataset_points(args.dataset):
+        dataset_fp = args.dataset.open("rb")
+        dataset_fp.seek(24 + args.offset * struct.calcsize("<16f"))
+        block_struct = struct.Struct("<16f")
+        for _ in range(n_blocks):
+            payload = dataset_fp.read(block_struct.size)
+            if len(payload) != block_struct.size:
+                raise EOFError("dataset ended mid-block")
+            data = ghl.nn.DatasetPoint(*block_struct.unpack(payload))
             count += 1
-            if args.limit is not None and count > args.limit:
-                break
             if count % report_progress_every == 0:
                 progress = min(100, count // report_progress_every)
                 print(f"Progress: {progress:3d}%", end="\r", flush=True)
@@ -209,7 +224,7 @@ def main() -> int:
             start = time.perf_counter()
             try:
                 eos.enable_neural_net_c2p = False
-                ghl.tabulated_Palenzuela1D_energy(
+                ghl.tabulated_con2prim_multi_method(
                     params, eos, metric, metric_aux, cons_undens, prims_ghl, diagnostics
                 )
                 ghl_n_eos_inversions = diagnostics.n_iter
@@ -225,7 +240,7 @@ def main() -> int:
             start = time.perf_counter()
             try:
                 eos.enable_neural_net_c2p = True
-                ghl.tabulated_Palenzuela1D_energy(
+                ghl.tabulated_con2prim_multi_method(
                     params, eos, metric, metric_aux, cons_undens, prims_nn, diagnostics
                 )
                 nn_n_eos_inversions = diagnostics.n_iter
@@ -247,6 +262,8 @@ def main() -> int:
                 else f"{nn_x_err:.8e} NAN NAN NAN"
             )
             fp.write(f"{ghl_err_text} {nn_err_text}\n")
+
+        dataset_fp.close()
 
     if count:
         print()
