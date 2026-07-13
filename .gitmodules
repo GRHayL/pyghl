@@ -1,4 +1,4 @@
 [submodule "extern/GRHayL"]
 	path = extern/GRHayL
 	url = https://github.com/GRHayL/GRHayL.git
-	branch = neural-network-con2prim-guess
+	branch = main

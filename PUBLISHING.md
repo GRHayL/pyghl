@@ -8,7 +8,22 @@ and runs when a GitHub release is published.
 
 Use `X.Y.Z` for the package version and `vX.Y.Z` for the Git tag.
 
-### 1. Update Version
+### 1. Sync GRHayL
+
+Update the `extern/GRHayL` submodule to the latest commit on its configured
+`main` branch:
+
+```bash
+git submodule update --init extern/GRHayL
+git submodule update --remote extern/GRHayL
+git -C extern/GRHayL log -1 --oneline
+git status --short
+```
+
+Review the upstream changes before publishing. The parent repository records
+the exact GRHayL commit, so include `extern/GRHayL` in the release commit.
+
+### 2. Update Version
 
 Edit `pyproject.toml`:
 
@@ -20,7 +35,7 @@ version = "X.Y.Z"
 This is the package version source of truth. `pyghl --version` reads the
 installed package metadata generated from this value.
 
-### 2. Run Local Checks
+### 3. Run Local Checks
 
 ```bash
 python -m compileall -q src setup.py
@@ -35,18 +50,18 @@ python -m venv /tmp/pyghl-smoke
 /tmp/pyghl-smoke/bin/pyghl --version
 ```
 
-### 3. Commit and Push
+### 4. Commit and Push
 
 ```bash
 git status
-git add pyproject.toml README.md PUBLISHING.md src setup.py .github
+git add .gitmodules extern/GRHayL pyproject.toml README.md PUBLISHING.md src setup.py .github
 git commit -m "Release pyghl X.Y.Z"
 git push
 ```
 
 Adjust `git add` paths to match the files that actually changed.
 
-### 4. Confirm Wheel CI
+### 5. Confirm Wheel CI
 
 Wait for the `Wheels` workflow on `main` to pass. It builds wheels for:
 
@@ -56,7 +71,7 @@ Wait for the `Wheels` workflow on `main` to pass. It builds wheels for:
 Download and test wheel artifacts if the release changes packaging, compiled
 code, dependencies, or command-line behavior.
 
-### 5. Create GitHub Release
+### 6. Create GitHub Release
 
 In GitHub:
 
