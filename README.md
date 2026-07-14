@@ -67,6 +67,11 @@ platforms. Source builds need additional system tools:
 
 Current CI builds wheels for Linux x86_64 and macOS arm64.
 
+> **EOS format support**
+>
+> Currently, `pyghl` supports only tables in the StellarCollapse HDF5 format.
+> Support for tables in the CompOSE format is planned for a future release.
+
 ## Downloading an EOS Table
 
 [stellarcollapse.org](https://stellarcollapse.org/equationofstate) provides
