@@ -67,6 +67,37 @@ platforms. Source builds need additional system tools:
 
 Current CI builds wheels for Linux x86_64 and macOS arm64.
 
+> **EOS format support**
+>
+> Currently, `pyghl` supports only tables in the StellarCollapse HDF5 format.
+> Support for tables in the CompOSE format is planned for a future release.
+
+## Downloading an EOS Table
+
+[stellarcollapse.org](https://stellarcollapse.org/equationofstate) provides
+GRHayL-compatible tabulated EOS files. For example, the
+[APR EOS page](https://stellarcollapse.org/APREOS.html) provides an APR table
+with NSE (3335 nuclides). Download and extract it before passing the HDF5 file
+to `pyghl`:
+
+```bash
+curl -fL \
+  'https://stockholmuniversity.box.com/s/xatxe62v9ywxr5sl2vf94e180uf1zkik?download=1' \
+  -o APR_3335_rho393_temp133_ye66_gitM180edd5_20190225.h5.tar.bz2
+tar -xjf APR_3335_rho393_temp133_ye66_gitM180edd5_20190225.h5.tar.bz2
+```
+
+This APR table does not currently have an installed `pyghl` model, so train
+one and embed it in the extracted EOS file:
+
+```bash
+pyghl train APR_3335_rho393_temp133_ye66_gitM180edd5_20190225.h5
+pyghl check-eos APR_3335_rho393_temp133_ye66_gitM180edd5_20190225.h5
+```
+
+`pyghl train` generates a training dataset, trains and saves the model, and
+embeds the resulting neural-network data into the EOS file.
+
 ## Basic EOS Neural-Network Workflow
 
 The quickest useful workflow is to make sure the EOS file itself contains the
