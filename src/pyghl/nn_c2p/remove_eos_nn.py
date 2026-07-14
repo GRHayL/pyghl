@@ -9,7 +9,7 @@ import pyghl as ghl
 def build_parser(prog: str | None = None) -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog=prog,
-        description="Remove the embedded GRHayL nn_c2p block from an EOS HDF5 file."
+        description="Remove the embedded GRHayL nn_c2p block from an EOS HDF5 file.",
     )
     parser.add_argument("eos_hdf5", type=Path)
     parser.add_argument("--verbose", action="store_true")
@@ -20,7 +20,9 @@ def main(argv: list[str] | None = None, prog: str | None = None) -> int:
     args = build_parser(prog=prog).parse_args(argv)
     info = ghl.nn.eos_nn_metadata(args.eos_hdf5)
     if not info["contains_nn"]:
-        print(f"No embedded neural-network dataset found in {args.eos_hdf5}; nothing to do.")
+        print(
+            f"No embedded neural-network dataset found in {args.eos_hdf5}; nothing to do."
+        )
         return 0
 
     summary = ghl.nn.remove_from_eos_file(args.eos_hdf5)

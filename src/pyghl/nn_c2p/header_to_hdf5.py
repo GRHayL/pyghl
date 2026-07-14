@@ -15,7 +15,9 @@ def _read_text(path: Path) -> str:
 
 
 def _parse_define(text: str, name: str) -> str:
-    match = re.search(rf"^\s*#define\s+{re.escape(name)}\s+(.+?)\s*$", text, flags=re.MULTILINE)
+    match = re.search(
+        rf"^\s*#define\s+{re.escape(name)}\s+(.+?)\s*$", text, flags=re.MULTILINE
+    )
     if match is None:
         raise ValueError(f"Could not find #define for {name}")
     return _strip_float_suffixes(match.group(1).strip())
@@ -69,11 +71,17 @@ def header_to_payload(header_text: str, *, dx_eps: float) -> dict[str, object]:
         "x_kind": np.asarray(_parse_array(header_text, "nn_x_kind"), dtype=np.int32),
         "x_lo": np.asarray(_parse_array(header_text, "nn_x_lo"), dtype=np.float32),
         "x_hi": np.asarray(_parse_array(header_text, "nn_x_hi"), dtype=np.float32),
-        "x_invrng": np.asarray(_parse_array(header_text, "nn_x_invrng"), dtype=np.float32),
-        "out_kind": np.asarray(_parse_array(header_text, "nn_out_kind"), dtype=np.int32),
+        "x_invrng": np.asarray(
+            _parse_array(header_text, "nn_x_invrng"), dtype=np.float32
+        ),
+        "out_kind": np.asarray(
+            _parse_array(header_text, "nn_out_kind"), dtype=np.int32
+        ),
         "out_lo": np.asarray(_parse_array(header_text, "nn_out_lo"), dtype=np.float32),
         "out_hi": np.asarray(_parse_array(header_text, "nn_out_hi"), dtype=np.float32),
-        "out_invrng": np.asarray(_parse_array(header_text, "nn_out_invrng"), dtype=np.float32),
+        "out_invrng": np.asarray(
+            _parse_array(header_text, "nn_out_invrng"), dtype=np.float32
+        ),
         "W_in": np.asarray(_parse_array(header_text, "nn_W_in"), dtype=np.float32),
         "b_in": np.asarray(_parse_array(header_text, "nn_b_in"), dtype=np.float32),
         "W_out": np.asarray(_parse_array(header_text, "nn_W_out"), dtype=np.float32),
@@ -84,8 +92,12 @@ def header_to_payload(header_text: str, *, dx_eps: float) -> dict[str, object]:
     n_hidden = int(payload["n_hidden"])
     hidden_dim = int(payload["hidden_dim"])
     if n_hidden > 1:
-        payload["W_hid"] = np.asarray(_parse_array(header_text, "nn_W_hid"), dtype=np.float32)
-        payload["b_hid"] = np.asarray(_parse_array(header_text, "nn_b_hid"), dtype=np.float32)
+        payload["W_hid"] = np.asarray(
+            _parse_array(header_text, "nn_W_hid"), dtype=np.float32
+        )
+        payload["b_hid"] = np.asarray(
+            _parse_array(header_text, "nn_b_hid"), dtype=np.float32
+        )
     else:
         payload["W_hid"] = np.zeros((0, hidden_dim, hidden_dim), dtype=np.float32)
         payload["b_hid"] = np.zeros((0, hidden_dim), dtype=np.float32)
@@ -93,7 +105,9 @@ def header_to_payload(header_text: str, *, dx_eps: float) -> dict[str, object]:
     return payload
 
 
-def write_hdf5(payload: dict[str, object], output_path: Path, *, source_header: Path) -> None:
+def write_hdf5(
+    payload: dict[str, object], output_path: Path, *, source_header: Path
+) -> None:
     mapped = {
         "dims": {
             "in_dim": np.int32(payload["in_dim"]),

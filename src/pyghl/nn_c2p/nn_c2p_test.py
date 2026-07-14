@@ -204,7 +204,9 @@ def main() -> int:
                 )
 
             diagnostics = ghl.initialize_diagnostics()
-            diagnostics.speed_limited = ghl.limit_v_and_compute_u0(params, metric, prims_orig)
+            diagnostics.speed_limited = ghl.limit_v_and_compute_u0(
+                params, metric, prims_orig
+            )
             cons = ghl.compute_conservs(metric, metric_aux, prims_orig)
             cons_undens = ghl.undensitize_conservatives(metric.sqrt_detgamma, cons)
 
@@ -233,7 +235,9 @@ def main() -> int:
                 pass
             ghl_total_s += time.perf_counter() - start
 
-            x_guess = ghl.nn.nn_initial_guess(params, eos, metric, cons_undens, prims_nn)
+            x_guess = ghl.nn.nn_initial_guess(
+                params, eos, metric, cons_undens, prims_nn
+            )
             error_nn = compute_prim_errors(prims_orig, prims_nn)
             nn_n_eos_inversions = None
             error_c2p_nn = None
@@ -267,8 +271,12 @@ def main() -> int:
 
     if count:
         print()
-        print(f"Exec time ghl: total {ghl_total_s:g} s, avg {ghl_total_s / count * 1e6:g} us")
-        print(f"Exec time nn : total {nn_total_s:g} s, avg {nn_total_s / count * 1e6:g} us")
+        print(
+            f"Exec time ghl: total {ghl_total_s:g} s, avg {ghl_total_s / count * 1e6:g} us"
+        )
+        print(
+            f"Exec time nn : total {nn_total_s:g} s, avg {nn_total_s / count * 1e6:g} us"
+        )
         try:
             if loaded_from_eos:
                 metadata = ghl.nn.eos_nn_metadata(args.table)

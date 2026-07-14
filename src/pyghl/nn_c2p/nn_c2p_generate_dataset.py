@@ -195,8 +195,12 @@ def generate_dataset(
     metric, metric_aux = set_flat_metric()
 
     n_blocks = n_pts**5
-    output = Path(output) if output is not None else Path(
-        "nn_test_dataset.bin" if is_test_dataset else "nn_training_dataset.bin"
+    output = (
+        Path(output)
+        if output is not None
+        else Path(
+            "nn_test_dataset.bin" if is_test_dataset else "nn_training_dataset.bin"
+        )
     )
     block_struct = struct.Struct("<16f")
 
@@ -293,8 +297,8 @@ def generate_dataset(
                             cons_undens = ghl.undensitize_conservatives(
                                 metric.sqrt_detgamma, cons
                             )
-                            _, B_squared, S_squared, BdotS = ghl.compute_SU_Bsq_Ssq_BdotS(
-                                metric, cons_undens, prims
+                            _, B_squared, S_squared, BdotS = (
+                                ghl.compute_SU_Bsq_Ssq_BdotS(metric, cons_undens, prims)
                             )
 
                             invD = 1.0 / cons_undens.rho
@@ -319,7 +323,13 @@ def generate_dataset(
                                     scan_points=scan_points,
                                 )
 
-                            for key, value in {"q": q, "r": r, "s": s, "t": t, "x": x_target}.items():
+                            for key, value in {
+                                "q": q,
+                                "r": r,
+                                "s": s,
+                                "t": t,
+                                "x": x_target,
+                            }.items():
                                 mins[key] = min(mins[key], value)
                                 maxs[key] = max(maxs[key], value)
 
@@ -342,7 +352,9 @@ def generate_dataset(
                                 + x_target
                             )
                             if not math.isfinite(total):
-                                raise ValueError("encountered a non-finite dataset value")
+                                raise ValueError(
+                                    "encountered a non-finite dataset value"
+                                )
 
                             fp.write(
                                 block_struct.pack(

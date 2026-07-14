@@ -87,7 +87,9 @@ def require_bindings() -> None:
                 "libghl is packaged beside the extension module."
             )
         else:
-            message += "\nRebuild or reinstall pyghl and inspect the loader error above."
+            message += (
+                "\nRebuild or reinstall pyghl and inspect the loader error above."
+            )
 
         raise ImportError(message) from _BINDINGS_IMPORT_ERROR
 

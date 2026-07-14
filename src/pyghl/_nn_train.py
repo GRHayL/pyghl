@@ -387,7 +387,9 @@ def relative_error_loss_x(
     if mode == "log1p_mse":
         z = torch.log1p(rel.abs())
         return (z * z).mean()
-    raise ValueError(f"Unknown relative loss mode '{mode}'. Use 'mse', 'mae', or 'log1p_mse'.")
+    raise ValueError(
+        f"Unknown relative loss mode '{mode}'. Use 'mse', 'mae', or 'log1p_mse'."
+    )
 
 
 def _finalize_stats_and_model(
@@ -457,7 +459,9 @@ def _get_backend_flags_snapshot() -> Dict[str, Any]:
     return flags
 
 
-def _normalize_state_dict_keys(state_dict: Dict[str, torch.Tensor]) -> Dict[str, torch.Tensor]:
+def _normalize_state_dict_keys(
+    state_dict: Dict[str, torch.Tensor],
+) -> Dict[str, torch.Tensor]:
     if "fcs.0.weight" in state_dict:
         return state_dict
     for prefix in ("_orig_mod.", "module."):
@@ -486,7 +490,9 @@ def _safe_torch_load(
             "Checkpoint loading requires a PyTorch version with torch.load(weights_only=True)."
         ) from exc
     if not isinstance(obj, dict):
-        raise ValueError(f"Expected checkpoint dict in {str(path)!r}, got {type(obj).__name__}.")
+        raise ValueError(
+            f"Expected checkpoint dict in {str(path)!r}, got {type(obj).__name__}."
+        )
     return obj
 
 
@@ -519,7 +525,9 @@ def _load_training_checkpoint(
         "last_epoch": int(ckpt.get("epoch", 0)),
         "best_epoch": int(ckpt.get("best_epoch", 0)),
         "best_rel_rmse": float(
-            ckpt.get("best_rel_rmse_combined", ckpt.get("best_rel_rmse_x", float("inf")))
+            ckpt.get(
+                "best_rel_rmse_combined", ckpt.get("best_rel_rmse_x", float("inf"))
+            )
         ),
         "best_state": best_state,
         "rng": ckpt.get("rng"),
@@ -541,7 +549,8 @@ def _resolve_resume_checkpoint(resume_checkpoint: Optional[str]) -> Optional[str
         candidates = [
             os.path.join(resume_checkpoint, name)
             for name in os.listdir(resume_checkpoint)
-            if name.endswith(".pt") and os.path.isfile(os.path.join(resume_checkpoint, name))
+            if name.endswith(".pt")
+            and os.path.isfile(os.path.join(resume_checkpoint, name))
         ]
         if not candidates:
             raise FileNotFoundError(
@@ -551,7 +560,9 @@ def _resolve_resume_checkpoint(resume_checkpoint: Optional[str]) -> Optional[str
             candidates,
             key=lambda p: (_checkpoint_epoch_from_name(p), os.path.getmtime(p)),
         )
-        print(f"Resolved resume checkpoint directory {resume_checkpoint!r} -> {resolved!r}")
+        print(
+            f"Resolved resume checkpoint directory {resume_checkpoint!r} -> {resolved!r}"
+        )
         return resolved
     raise FileNotFoundError(
         f"resume_checkpoint path {resume_checkpoint!r} does not exist as a file or directory."
@@ -666,12 +677,8 @@ def train_regressor(
     Xtr_raw, ytr = X_raw[tr_idx], y[tr_idx]
     Xva_raw, yva = X_raw[val_idx], y[val_idx]
 
-    ytr_y01 = x_to_y01_target(
-        Xtr_raw, ytr, q_idx=q_idx, s_idx=s_idx, y_eps=y_eps
-    )
-    yva_y01 = x_to_y01_target(
-        Xva_raw, yva, q_idx=q_idx, s_idx=s_idx, y_eps=y_eps
-    )
+    ytr_y01 = x_to_y01_target(Xtr_raw, ytr, q_idx=q_idx, s_idx=s_idx, y_eps=y_eps)
+    yva_y01 = x_to_y01_target(Xva_raw, yva, q_idx=q_idx, s_idx=s_idx, y_eps=y_eps)
     y_out_stats = {
         "lo": torch.zeros(1, dtype=torch.float32),
         "hi": torch.ones(1, dtype=torch.float32),
@@ -720,11 +727,15 @@ def train_regressor(
         "y_eps": torch.tensor(float(y_eps), dtype=torch.float32),
         "robust_mm_qlo": torch.tensor(float(robust_mm_qlo), dtype=torch.float32),
         "robust_mm_qhi": torch.tensor(float(robust_mm_qhi), dtype=torch.float32),
-        "pos_log10_ratio_thresh": torch.tensor(float(pos_log10_ratio_thresh), dtype=torch.float32),
+        "pos_log10_ratio_thresh": torch.tensor(
+            float(pos_log10_ratio_thresh), dtype=torch.float32
+        ),
         "neg_frac_tol": torch.tensor(float(neg_frac_tol), dtype=torch.float32),
         "min_pos_count": torch.tensor(float(min_pos_count), dtype=torch.float32),
         "width_tiny": torch.tensor(float(width_tiny), dtype=torch.float32),
-        "dropped_invalid_width_rows": torch.tensor(dropped_invalid_width_value, dtype=torch.float32),
+        "dropped_invalid_width_rows": torch.tensor(
+            dropped_invalid_width_value, dtype=torch.float32
+        ),
         "rel_denom_eps": torch.tensor(float(rel_denom_eps), dtype=torch.float32),
     }
 
@@ -748,7 +759,9 @@ def train_regressor(
             model = torch.compile(model)
             print("Enabled torch.compile(model)")
         except Exception as exc:
-            print(f"Note: torch.compile unavailable/failed ({exc}); continuing without it.")
+            print(
+                f"Note: torch.compile unavailable/failed ({exc}); continuing without it."
+            )
 
     opt_kwargs = dict(lr=lr, weight_decay=weight_decay)
     if device.type == "cuda":
@@ -830,14 +843,18 @@ def train_regressor(
         if (log_mode == "w") or (not log_exists):
             flog.write("# run metadata columns\n")
             flog.write("# 1: seed\n# 2: perm_sha1_16\n# 3: q_idx\n# 4: s_idx\n")
-            flog.write("# 5: target_mode\n# 6: y_eps\n# 7: width_tiny\n# 8: tr_clip_frac\n# 9: va_clip_frac\n")
+            flog.write(
+                "# 5: target_mode\n# 6: y_eps\n# 7: width_tiny\n# 8: tr_clip_frac\n# 9: va_clip_frac\n"
+            )
             flog.write("# 10: rel_denom_eps\n# 11: rel_loss_mode\n")
             flog.write(
                 f"# {seed} {perm_hash} {q_idx} {s_idx} {target_mode} {y_eps:.9g} {width_tiny:.9g} "
                 f"{tr_clip_frac:.6e} {va_clip_frac:.6e} {rel_denom_eps:.9g} {rel_loss_mode}\n"
             )
             flog.write("# epoch data columns\n")
-            flog.write("# 1: epoch\n# 2: val_rel_mse_x\n# 3: val_rel_MAE_x\n# 4: val_rel_RMSE_x\n")
+            flog.write(
+                "# 1: epoch\n# 2: val_rel_mse_x\n# 3: val_rel_MAE_x\n# 4: val_rel_RMSE_x\n"
+            )
             flog.write("# 5: best_rel_RMSE_x\n# 6: best_epoch\n# 7: train_rel_loss\n")
             flog.write("# 8: val_mse_y01\n# 9: val_clip_frac\n# 10: lr\n")
         print(
@@ -879,12 +896,8 @@ def train_regressor(
                 y01_va = torch.sigmoid(model(Xva01)).to(torch.float32)
                 y01_va_pred = torch.clamp(y01_va, min=clamp_min, max=clamp_max)
                 val_mse_y01 = float(((y01_va_pred - yva_y01_dev) ** 2).mean().item())
-                x_va = y01_to_x_differentiable_from_qs(
-                    Xva_qs_dev, y01_va, y_eps=y_eps
-                )
-                x_rel = x_relative_metrics(
-                    x_va, yva_dev, denom_eps=rel_denom_eps
-                )
+                x_va = y01_to_x_differentiable_from_qs(Xva_qs_dev, y01_va, y_eps=y_eps)
+                x_rel = x_relative_metrics(x_va, yva_dev, denom_eps=rel_denom_eps)
                 val_rel_mse_combined = x_rel[0]
                 val_rel_stop_metric = x_rel[2]
 
@@ -895,7 +908,8 @@ def train_regressor(
                 best_epoch = ep
                 base_model = _checkpoint_model(model)
                 best_state = {
-                    k: v.detach().cpu().clone() for k, v in base_model.state_dict().items()
+                    k: v.detach().cpu().clone()
+                    for k, v in base_model.state_dict().items()
                 }
                 bad = 0
             else:
@@ -926,7 +940,11 @@ def train_regressor(
                 )
             )
 
-            if checkpoint_every and checkpoint_every > 0 and (ep % checkpoint_every == 0):
+            if (
+                checkpoint_every
+                and checkpoint_every > 0
+                and (ep % checkpoint_every == 0)
+            ):
                 base_model = _checkpoint_model(model)
                 ckpt_path = os.path.join(
                     checkpoint_dir, f"{checkpoint_prefix}_ep{ep:05d}.pt"
@@ -938,7 +956,8 @@ def train_regressor(
                         "best_rel_rmse_combined": best_rel_rmse,
                         "perm_sha1_16": perm_hash,
                         "model_state_dict": {
-                            k: v.detach().cpu() for k, v in base_model.state_dict().items()
+                            k: v.detach().cpu()
+                            for k, v in base_model.state_dict().items()
                         },
                         "best_model_state_dict": best_state,
                         "opt_state_dict": _optimizer_state_to_cpu(opt.state_dict()),
@@ -954,8 +973,14 @@ def train_regressor(
                             "q_idx": int(ft_stats.q_idx),
                             "s_idx": int(ft_stats.s_idx),
                         },
-                        "x_stats": {k: v.detach().cpu().to(torch.float32) for k, v in x_stats.items()},
-                        "y_stats": {k: v.detach().cpu().to(torch.float32) for k, v in y_stats.items()},
+                        "x_stats": {
+                            k: v.detach().cpu().to(torch.float32)
+                            for k, v in x_stats.items()
+                        },
+                        "y_stats": {
+                            k: v.detach().cpu().to(torch.float32)
+                            for k, v in y_stats.items()
+                        },
                         "train_rel_loss_mode": rel_loss_mode,
                         "rel_denom_eps": float(rel_denom_eps),
                     },
@@ -995,7 +1020,9 @@ def export_to_c_header(
     y_stats: Dict[str, torch.Tensor],
     path: str,
 ):
-    if not (hasattr(model, "fcs") and hasattr(model, "out") and hasattr(model, "n_hidden")):
+    if not (
+        hasattr(model, "fcs") and hasattr(model, "out") and hasattr(model, "n_hidden")
+    ):
         raise TypeError(
             "export_to_c_header expects a TinyMLP_Logit-like model with .fcs and .out."
         )
@@ -1004,7 +1031,10 @@ def export_to_c_header(
     if "fcs.0.weight" not in sd:
         for prefix in ("_orig_mod.", "module."):
             if (prefix + "fcs.0.weight") in sd:
-                sd = {k[len(prefix):] if k.startswith(prefix) else k: v for k, v in sd.items()}
+                sd = {
+                    k[len(prefix) :] if k.startswith(prefix) else k: v
+                    for k, v in sd.items()
+                }
                 break
 
     W_in = sd["fcs.0.weight"]
@@ -1033,11 +1063,15 @@ def export_to_c_header(
     if any(int(t.numel()) != int(Din) for t in (x_lo, x_hi, x_invrng)):
         raise ValueError("x_stats lengths must match input dimension")
     if int(out_kind.numel()) != int(model.out_dim):
-        raise ValueError(f"nn_out_kind length {out_kind.numel()} != Dout {model.out_dim}")
+        raise ValueError(
+            f"nn_out_kind length {out_kind.numel()} != Dout {model.out_dim}"
+        )
 
     def ensure_finite(name: str, t: torch.Tensor) -> None:
         if not torch.isfinite(t).all():
-            raise ValueError(f"Non-finite values detected in '{name}'. Refusing to export header.")
+            raise ValueError(
+                f"Non-finite values detected in '{name}'. Refusing to export header."
+            )
 
     for name, tensor in (
         ("nn_W_in", W_in),
@@ -1081,7 +1115,9 @@ def export_to_c_header(
         for i in range(r):
             vals = ", ".join(c_float32(float(v)) for v in t[i].tolist())
             rows.append(f"  {{ {vals} }}")
-        return f"static const float {name}[{r}][{c}] = {{\n" + ",\n".join(rows) + "\n};\n"
+        return (
+            f"static const float {name}[{r}][{c}] = {{\n" + ",\n".join(rows) + "\n};\n"
+        )
 
     base = os.path.basename(path)
     guard_base = re.sub(r"[^0-9A-Za-z_]", "_", base).upper()
@@ -1094,7 +1130,9 @@ def export_to_c_header(
         "/*============================================================================*/\n",
     ]
     if int(model.out_dim) == 1:
-        header.append("// Model: logit -> sigmoid -> bounded x (Palenzuela lower-bound correction)\n")
+        header.append(
+            "// Model: logit -> sigmoid -> bounded x (Palenzuela lower-bound correction)\n"
+        )
     elif int(model.out_dim) == 3:
         header.append("// Model: logit -> sigmoid -> out_dim=3\n")
     else:
@@ -1156,15 +1194,23 @@ def export_to_c_header(
             for i in range(H):
                 vals = ", ".join(c_float32(float(v)) for v in W[i].tolist())
                 rows.append(f"    {{ {vals} }}")
-            header.append(f"  {{\n" + ",\n".join(rows) + f"\n  }}{',' if li != len(W_hid)-1 else ''}\n")
+            header.append(
+                f"  {{\n"
+                + ",\n".join(rows)
+                + f"\n  }}{',' if li != len(W_hid)-1 else ''}\n"
+            )
         header.append("};\n\n")
-        header.append(f"static const float nn_b_hid[{n_hidden-1}][NN_HIDDEN_DIM] = {{\n")
+        header.append(
+            f"static const float nn_b_hid[{n_hidden-1}][NN_HIDDEN_DIM] = {{\n"
+        )
         for li, b in enumerate(b_hid):
             vals = ", ".join(c_float32(float(v)) for v in b.tolist())
             header.append(f"  {{ {vals} }}{',' if li != len(b_hid)-1 else ''}\n")
         header.append("};\n\n")
 
-    header.extend([as_c_array_2d("nn_W_out", W_out), as_c_array_1d("nn_b_out", b_out), "\n"])
+    header.extend(
+        [as_c_array_2d("nn_W_out", W_out), as_c_array_1d("nn_b_out", b_out), "\n"]
+    )
     if EXPORT_USE_INCLUDE_GUARD:
         header.append(f"#endif /* {guard} */\n")
 
@@ -1185,7 +1231,9 @@ def export_to_hdf5(
 ):
     import numpy as np
 
-    if not (hasattr(model, "fcs") and hasattr(model, "out") and hasattr(model, "n_hidden")):
+    if not (
+        hasattr(model, "fcs") and hasattr(model, "out") and hasattr(model, "n_hidden")
+    ):
         raise TypeError(
             "export_to_hdf5 expects a TinyMLP_Logit-like model with .fcs and .out."
         )
@@ -1238,11 +1286,31 @@ def export_to_hdf5(
             "x_kind": ft_stats.kind.detach().cpu().numpy().astype(np.int32, copy=False),
             "x_lo": x_stats["lo"].detach().cpu().numpy().astype(np.float32, copy=False),
             "x_hi": x_stats["hi"].detach().cpu().numpy().astype(np.float32, copy=False),
-            "x_invrng": x_stats["invrng"].detach().cpu().numpy().astype(np.float32, copy=False),
-            "out_kind": y_stats["out_kind"].detach().cpu().numpy().astype(np.int32, copy=False),
-            "out_lo": y_stats["out_lo"].detach().cpu().numpy().astype(np.float32, copy=False),
-            "out_hi": y_stats["out_hi"].detach().cpu().numpy().astype(np.float32, copy=False),
-            "out_invrng": y_stats["out_invrng"].detach().cpu().numpy().astype(np.float32, copy=False),
+            "x_invrng": x_stats["invrng"]
+            .detach()
+            .cpu()
+            .numpy()
+            .astype(np.float32, copy=False),
+            "out_kind": y_stats["out_kind"]
+            .detach()
+            .cpu()
+            .numpy()
+            .astype(np.int32, copy=False),
+            "out_lo": y_stats["out_lo"]
+            .detach()
+            .cpu()
+            .numpy()
+            .astype(np.float32, copy=False),
+            "out_hi": y_stats["out_hi"]
+            .detach()
+            .cpu()
+            .numpy()
+            .astype(np.float32, copy=False),
+            "out_invrng": y_stats["out_invrng"]
+            .detach()
+            .cpu()
+            .numpy()
+            .astype(np.float32, copy=False),
         },
         "layers": {
             "W_in": W_in,
@@ -1377,8 +1445,12 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("dataset", nargs="?", type=Path)
     parser.add_argument("--checkpoint")
     parser.add_argument("--hdf5_output", type=Path, default=Path("tiny_mlp_model.h5"))
-    parser.add_argument("--bundle_output", type=Path, default=Path("tiny_mlp_inference.pt"))
-    parser.add_argument("--header_output", type=Path, default=Path("tiny_mlp_weights.h"))
+    parser.add_argument(
+        "--bundle_output", type=Path, default=Path("tiny_mlp_inference.pt")
+    )
+    parser.add_argument(
+        "--header_output", type=Path, default=Path("tiny_mlp_weights.h")
+    )
     parser.add_argument("--epochs", type=int, default=2000)
     parser.add_argument("--batch_size", type=int, default=4096)
     parser.add_argument("--patience", type=int, default=250)
@@ -1392,7 +1464,9 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--append_eos", choices=("yes", "no"), default="yes")
     parser.add_argument("--overwrite_eos", action="store_true")
-    parser.add_argument("--register_installed_model", choices=("yes", "no"), default="yes")
+    parser.add_argument(
+        "--register_installed_model", choices=("yes", "no"), default="yes"
+    )
     parser.add_argument("--overwrite_installed_model", action="store_true")
     parser.add_argument("--force_retrain", action="store_true")
     parser.add_argument("--dataset_n_pts", type=int, default=16)

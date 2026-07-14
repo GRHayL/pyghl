@@ -106,6 +106,7 @@ def _loader_rpath_arg() -> str:
         return "-Wl,-rpath,@loader_path"
     return "-Wl,-rpath,$ORIGIN"
 
+
 ext_modules = [
     Extension(
         "pyghl._pyghl",

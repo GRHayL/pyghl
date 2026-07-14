@@ -9,10 +9,10 @@ from pathlib import Path
 import re
 import sys
 import tarfile
-from typing import Callable, Iterable
+import time
+from typing import Callable, Iterable, TextIO
 from urllib.parse import unquote, urldefrag, urljoin, urlparse
 from urllib.request import build_opener, HTTPRedirectHandler
-
 
 MICROPHYSICS_URL = "https://stellarcollapse.org/microphysics.html"
 LEGACY_CATALOG_URL = "https://stellarcollapse.org/equationofstate.html"
@@ -28,6 +28,10 @@ MAX_CATALOG_PAGES = 64
 MAX_COMPRESSED_BYTES = 6 * 1024 * 1024 * 1024
 MAX_DECOMPRESSED_BYTES = 16 * 1024 * 1024 * 1024
 TRANSFER_CHUNK_BYTES = 1024 * 1024
+DOWNLOAD_CHUNK_BYTES = 64 * 1024
+PROGRESS_BAR_WIDTH = 24
+PROGRESS_UPDATE_SECONDS = 0.2
+LOG_PROGRESS_UPDATE_SECONDS = 5.0
 _EOS_FILENAME = re.compile(r"[A-Za-z0-9._+-]+\.h5(?:\.tar)?\.bz2\Z")
 
 
@@ -144,7 +148,10 @@ def parse_eos_family_pages(
     pages: list[EOSCatalogPage] = []
     seen: set[str] = set()
     for href, text, title in parser.links:
-        if "eos" not in f"{text} {title}".lower() and "equation of state" not in text.lower():
+        if (
+            "eos" not in f"{text} {title}".lower()
+            and "equation of state" not in text.lower()
+        ):
             continue
         url = urldefrag(urljoin(base_url, href)).url
         parsed = urlparse(url)
@@ -163,7 +170,9 @@ def parse_eos_family_pages(
 
 
 def _normalize_lines(parts: Iterable[str]) -> list[str]:
-    return [" ".join(line.split()) for line in "".join(parts).splitlines() if line.strip()]
+    return [
+        " ".join(line.split()) for line in "".join(parts).splitlines() if line.strip()
+    ]
 
 
 class _CatalogParser(HTMLParser):
@@ -217,9 +226,7 @@ class _CatalogParser(HTMLParser):
         ]
         if not eos_links:
             family_links = [
-                text.rstrip("*").strip()
-                for _href, text in self._links
-                if "EOS" in text
+                text.rstrip("*").strip() for _href, text in self._links if "EOS" in text
             ]
             if len(self._cells or ()) == 1 and family_links:
                 self.family = " / ".join(dict.fromkeys(family_links))
@@ -269,7 +276,9 @@ def _fetch_catalog_html(
         or requested.hostname != ALLOWED_CATALOG_HOST
         or requested.port is not None
     ):
-        raise ValueError(f"EOS catalog page must use https://{ALLOWED_CATALOG_HOST}: {url}")
+        raise ValueError(
+            f"EOS catalog page must use https://{ALLOWED_CATALOG_HOST}: {url}"
+        )
     with open_url(
         url,
         timeout=NETWORK_TIMEOUT_SECONDS,
@@ -277,10 +286,14 @@ def _fetch_catalog_html(
         final_url = response.geturl()  # type: ignore[attr-defined]
         parsed = urlparse(final_url)
         if parsed.scheme != "https" or parsed.hostname != ALLOWED_CATALOG_HOST:
-            raise ValueError(f"StellarCollapse catalog redirected to untrusted URL: {final_url}")
+            raise ValueError(
+                f"StellarCollapse catalog redirected to untrusted URL: {final_url}"
+            )
         payload = response.read(MAX_CATALOG_BYTES + 1)  # type: ignore[attr-defined]
         if len(payload) > MAX_CATALOG_BYTES:
-            raise OSError(f"EOS catalog exceeds safety limit of {MAX_CATALOG_BYTES} bytes")
+            raise OSError(
+                f"EOS catalog exceeds safety limit of {MAX_CATALOG_BYTES} bytes"
+            )
         return payload.decode("utf-8")
 
 
@@ -324,13 +337,139 @@ def fetch_eos_catalog(
     return tables
 
 
-def _copy_with_limit(source, destination, *, limit: int) -> None:
+def _format_bytes(byte_count: int) -> str:
+    value = float(byte_count)
+    for unit in ("B", "KiB", "MiB", "GiB", "TiB"):
+        if value < 1024.0 or unit == "TiB":
+            if unit == "B":
+                return f"{int(value)} {unit}"
+            return f"{value:.1f} {unit}"
+        value /= 1024.0
+    raise AssertionError("unreachable")
+
+
+def _format_duration(seconds: float) -> str:
+    total_seconds = max(0, int(seconds))
+    hours, remainder = divmod(total_seconds, 3600)
+    minutes, seconds = divmod(remainder, 60)
+    if hours:
+        return f"{hours:d}:{minutes:02d}:{seconds:02d}"
+    return f"{minutes:02d}:{seconds:02d}"
+
+
+class _DownloadProgress:
+    def __init__(
+        self,
+        total_bytes: int | None,
+        *,
+        stream: TextIO | None = None,
+        clock: Callable[[], float] = time.monotonic,
+        update_interval: float | None = None,
+    ) -> None:
+        self.total_bytes = (
+            total_bytes if total_bytes is not None and total_bytes >= 0 else None
+        )
+        self.stream = stream if stream is not None else sys.stderr
+        self.clock = clock
+        self.is_terminal = bool(getattr(self.stream, "isatty", lambda: False)())
+        default_interval = (
+            PROGRESS_UPDATE_SECONDS if self.is_terminal else LOG_PROGRESS_UPDATE_SECONDS
+        )
+        self.update_interval = (
+            default_interval if update_interval is None else update_interval
+        )
+        self.started_at = clock()
+        self.last_update = self.started_at - self.update_interval
+        self.last_width = 0
+        self.render_count = 0
+
+    def _status_line(self, downloaded: int, elapsed: float) -> str:
+        speed = downloaded / elapsed if elapsed > 0.0 else 0.0
+        speed_text = f"{_format_bytes(int(speed))}/s" if speed else "-- B/s"
+        if self.total_bytes is not None:
+            fraction = (
+                min(downloaded / self.total_bytes, 1.0) if self.total_bytes else 1.0
+            )
+            filled = min(int(fraction * PROGRESS_BAR_WIDTH), PROGRESS_BAR_WIDTH)
+            if filled == PROGRESS_BAR_WIDTH:
+                bar = "=" * PROGRESS_BAR_WIDTH
+            else:
+                bar = "=" * filled + ">" + "-" * (PROGRESS_BAR_WIDTH - filled - 1)
+            remaining = max(self.total_bytes - downloaded, 0)
+            eta = remaining / speed if speed else 0.0
+            eta_text = f"ETA {_format_duration(eta)}" if speed else "ETA --:--"
+            return (
+                f"[{bar}] {fraction:6.1%}  "
+                f"{_format_bytes(downloaded)}/{_format_bytes(self.total_bytes)}  "
+                f"{speed_text}  {eta_text}"
+            )
+
+        marker_width = 3
+        travel = PROGRESS_BAR_WIDTH - marker_width
+        position = self.render_count % (2 * travel) if travel else 0
+        if position > travel:
+            position = 2 * travel - position
+        bar = "-" * position + "<=>" + "-" * (travel - position)
+        return (
+            f"[{bar}] {_format_bytes(downloaded)}  {speed_text}  "
+            f"elapsed {_format_duration(elapsed)}"
+        )
+
+    def update(self, downloaded: int, *, force: bool = False) -> None:
+        now = self.clock()
+        if not force and now - self.last_update < self.update_interval:
+            return
+        line = self._status_line(downloaded, max(0.0, now - self.started_at))
+        if self.is_terminal:
+            self.stream.write("\r" + line.ljust(self.last_width))
+        else:
+            self.stream.write(line + "\n")
+        self.stream.flush()
+        self.last_update = now
+        self.last_width = len(line)
+        self.render_count += 1
+
+    def finish(self, downloaded: int) -> None:
+        self.update(downloaded, force=True)
+        if self.is_terminal:
+            self.stream.write("\n")
+            self.stream.flush()
+
+    def close(self) -> None:
+        if self.is_terminal and self.last_width:
+            self.stream.write("\n")
+            self.stream.flush()
+
+
+def _content_length(response: object) -> int | None:
+    headers = getattr(response, "headers", None)
+    raw_length = headers.get("Content-Length") if headers is not None else None
+    try:
+        content_length = int(raw_length)
+    except (TypeError, ValueError):
+        return None
+    if 0 <= content_length <= MAX_COMPRESSED_BYTES:
+        return content_length
+    return None
+
+
+def _copy_with_limit(
+    source,
+    destination,
+    *,
+    limit: int,
+    chunk_size: int = TRANSFER_CHUNK_BYTES,
+    on_progress: Callable[[int], None] | None = None,
+) -> int:
     total = 0
-    while chunk := source.read(TRANSFER_CHUNK_BYTES):
+    while chunk := source.read(chunk_size):
         total += len(chunk)
         if total > limit:
             raise OSError(f"EOS table exceeds safety limit of {limit} bytes")
         destination.write(chunk)
+        if on_progress is not None:
+            on_progress(total)
+    return total
 
 
 def download_eos_table(
@@ -354,7 +493,9 @@ def download_eos_table(
         print(f"Using existing EOS table: {destination}")
         return destination
     if destination.exists():
-        raise FileExistsError(f"EOS destination exists but is not a file: {destination}")
+        raise FileExistsError(
+            f"EOS destination exists but is not a file: {destination}"
+        )
 
     archive_part = destination_dir / f"{table.filename}.part"
     destination_part = destination_dir / f"{destination.name}.part"
@@ -371,8 +512,21 @@ def download_eos_table(
                 response.geturl(),  # type: ignore[attr-defined]
                 expected_filename=table.filename,
             )
-            with archive_part.open("wb") as archive:
-                _copy_with_limit(response, archive, limit=MAX_COMPRESSED_BYTES)
+            progress = _DownloadProgress(_content_length(response))
+            progress.update(0, force=True)
+            try:
+                with archive_part.open("wb") as archive:
+                    downloaded = _copy_with_limit(
+                        response,
+                        archive,
+                        limit=MAX_COMPRESSED_BYTES,
+                        chunk_size=DOWNLOAD_CHUNK_BYTES,
+                        on_progress=progress.update,
+                    )
+            except BaseException:
+                progress.close()
+                raise
+            progress.finish(downloaded)
 
         print(f"Decompressing {table.filename} ...")
         with destination_part.open("wb") as output:
@@ -380,7 +534,9 @@ def download_eos_table(
                 hdf5_members = 0
                 with tarfile.open(archive_part, mode="r|bz2") as archive:
                     for member in archive:
-                        if not member.isfile() or not Path(member.name).name.endswith(".h5"):
+                        if not member.isfile() or not Path(member.name).name.endswith(
+                            ".h5"
+                        ):
                             continue
                         hdf5_members += 1
                         if hdf5_members > 1:
@@ -389,7 +545,9 @@ def download_eos_table(
                             )
                         extracted = archive.extractfile(member)
                         if extracted is None:
-                            raise OSError("Could not read HDF5 file from APR EOS archive")
+                            raise OSError(
+                                "Could not read HDF5 file from APR EOS archive"
+                            )
                         with extracted:
                             _copy_with_limit(
                                 extracted,
@@ -418,7 +576,9 @@ def choice_matches(table: EOSTable, query: str) -> bool:
     return all(term in haystack for term in terms)
 
 
-def _add_clipped(screen, row: int, column: int, text: str, width: int, attrs: int = 0) -> None:
+def _add_clipped(
+    screen, row: int, column: int, text: str, width: int, attrs: int = 0
+) -> None:
     if width <= 0:
         return
     clipped = text if len(text) <= width else text[: max(0, width - 3)] + "..."
@@ -445,14 +605,18 @@ def _run_eos_picker(screen, tables: list[EOSTable]) -> EOSTable:
         screen.erase()
 
         if rows < 12 or columns < 72:
-            _add_clipped(screen, 0, 0, "Terminal too small; resize to at least 72x12.", columns)
+            _add_clipped(
+                screen, 0, 0, "Terminal too small; resize to at least 72x12.", columns
+            )
             screen.refresh()
             if screen.getch() in (3, 27):
                 raise KeyboardInterrupt
             continue
 
         screen.border()
-        _add_clipped(screen, 0, 2, " StellarCollapse EOS tables ", columns - 4, curses.A_BOLD)
+        _add_clipped(
+            screen, 0, 2, " StellarCollapse EOS tables ", columns - 4, curses.A_BOLD
+        )
         _add_clipped(
             screen,
             1,
@@ -461,7 +625,9 @@ def _run_eos_picker(screen, tables: list[EOSTable]) -> EOSTable:
             columns - 4,
             curses.A_DIM,
         )
-        _add_clipped(screen, 2, 2, f"Filter: {query or '[all]'}", columns - 4, curses.A_BOLD)
+        _add_clipped(
+            screen, 2, 2, f"Filter: {query or '[all]'}", columns - 4, curses.A_BOLD
+        )
 
         list_top = 4
         list_height = max(1, rows - 7)
@@ -481,7 +647,9 @@ def _run_eos_picker(screen, tables: list[EOSTable]) -> EOSTable:
         )
 
         if not visible:
-            _add_clipped(screen, list_top, 4, "No matches. Backspace edits filter.", columns - 8)
+            _add_clipped(
+                screen, list_top, 4, "No matches. Backspace edits filter.", columns - 8
+            )
         else:
             row_width = columns - 4
             label_width = max(20, row_width // 2)
@@ -541,11 +709,15 @@ def select_eos_table(tables: list[EOSTable]) -> EOSTable:
     if not tables:
         raise RuntimeError("No StellarCollapse EOS tables available for selection.")
     if not sys.stdin.isatty() or not sys.stdout.isatty():
-        raise RuntimeError("StellarCollapse EOS selector requires an interactive terminal.")
+        raise RuntimeError(
+            "StellarCollapse EOS selector requires an interactive terminal."
+        )
     try:
         return curses.wrapper(_run_eos_picker, tables)
     except curses.error as exc:
-        raise RuntimeError("Could not start StellarCollapse terminal selector.") from exc
+        raise RuntimeError(
+            "Could not start StellarCollapse terminal selector."
+        ) from exc
 
 
 def choose_and_download_eos(

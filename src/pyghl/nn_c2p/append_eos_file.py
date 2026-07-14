@@ -9,7 +9,7 @@ import pyghl as ghl
 def build_parser(prog: str | None = None) -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog=prog,
-        description="Append a GRHayL nn_c2p HDF5 model into an EOS HDF5 file."
+        description="Append a GRHayL nn_c2p HDF5 model into an EOS HDF5 file.",
     )
     parser.add_argument("eos_hdf5", type=Path)
     parser.add_argument("nn_hdf5", nargs="?", type=Path)

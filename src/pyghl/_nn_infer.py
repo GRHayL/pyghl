@@ -14,7 +14,6 @@ from ._nn_common import (
     apply_robust_minmax,
 )
 
-
 OUT_KIND_X_BOUNDED = 0
 OUT_KIND_LINEAR = 1
 OUT_KIND_LOG_LINEAR = 2
@@ -36,7 +35,9 @@ def _safe_torch_load(
             "Inference-bundle loading requires a PyTorch version with torch.load(weights_only=True)."
         ) from exc
     if not isinstance(obj, dict):
-        raise ValueError(f"Expected inference-bundle dict in {str(path)!r}, got {type(obj).__name__}.")
+        raise ValueError(
+            f"Expected inference-bundle dict in {str(path)!r}, got {type(obj).__name__}."
+        )
     return obj
 
 
@@ -63,12 +64,16 @@ def decode_output_targets(
             y01c = torch.clamp(y01[:, idx : idx + 1], min=y_eps, max=1.0 - y_eps)
             out[:, idx : idx + 1] = x_lo + y01c * width
         elif int(out_kind[idx].item()) == OUT_KIND_LINEAR:
-            out[:, idx : idx + 1] = out_lo[idx] + y01[:, idx : idx + 1] / out_invrng[idx]
+            out[:, idx : idx + 1] = (
+                out_lo[idx] + y01[:, idx : idx + 1] / out_invrng[idx]
+            )
         elif int(out_kind[idx].item()) == OUT_KIND_LOG_LINEAR:
             log_out = out_lo[idx] + y01[:, idx : idx + 1] / out_invrng[idx]
             out[:, idx : idx + 1] = torch.exp(log_out)
         else:
-            raise ValueError(f"Unsupported output kind {int(out_kind[idx].item())} at index {idx}")
+            raise ValueError(
+                f"Unsupported output kind {int(out_kind[idx].item())} at index {idx}"
+            )
     return out
 
 
@@ -218,7 +223,9 @@ def _prepare_bundle_on_device(
         else float(y_eps_val)
     )
 
-    width_tiny_val = y_stats.get("width_tiny", torch.tensor(1.0e-12, dtype=torch.float32))
+    width_tiny_val = y_stats.get(
+        "width_tiny", torch.tensor(1.0e-12, dtype=torch.float32)
+    )
     width_tiny_float = (
         float(width_tiny_val.detach().cpu().reshape(-1)[0].item())
         if isinstance(width_tiny_val, torch.Tensor)

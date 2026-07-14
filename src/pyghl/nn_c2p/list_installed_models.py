@@ -8,7 +8,7 @@ import pyghl as ghl
 def build_parser(prog: str | None = None) -> argparse.ArgumentParser:
     return argparse.ArgumentParser(
         prog=prog,
-        description="List packaged GRHayL nn_c2p models that can be auto-matched to EOS files."
+        description="List packaged GRHayL nn_c2p models that can be auto-matched to EOS files.",
     )
 
 

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import bz2
+from contextlib import redirect_stderr
 import io
 import tempfile
 import tarfile
@@ -9,7 +10,6 @@ from pathlib import Path
 from unittest import mock
 
 from pyghl.nn_c2p import eos_catalog
-
 
 CATALOG_HTML = """
 <table>
@@ -60,9 +60,15 @@ SRO_CATALOG_HTML = """
 
 
 class _Response(io.BytesIO):
-    def __init__(self, payload: bytes, url: str):
+    def __init__(
+        self,
+        payload: bytes,
+        url: str,
+        headers: dict[str, str] | None = None,
+    ):
         super().__init__(payload)
         self._url = url
+        self.headers = headers or {}
 
     def geturl(self) -> str:
         return self._url
@@ -95,6 +101,44 @@ class _PickerScreen:
 
 
 class EOSCatalogTests(unittest.TestCase):
+    def test_download_progress_reports_percentage_speed_and_eta(self) -> None:
+        output = io.StringIO()
+        clock = mock.Mock(side_effect=[0.0, 2.0])
+        progress = eos_catalog._DownloadProgress(
+            total_bytes=4 * 1024 * 1024,
+            stream=output,
+            clock=clock,
+            update_interval=0.0,
+        )
+
+        progress.update(2 * 1024 * 1024)
+
+        status = output.getvalue()
+        self.assertIn("50.0%", status)
+        self.assertIn("2.0 MiB/4.0 MiB", status)
+        self.assertIn("1.0 MiB/s", status)
+        self.assertIn("ETA 00:02", status)
+        self.assertIn("[", status)
+        self.assertIn("]", status)
+
+    def test_download_progress_handles_missing_content_length(self) -> None:
+        output = io.StringIO()
+        clock = mock.Mock(side_effect=[0.0, 2.0])
+        progress = eos_catalog._DownloadProgress(
+            total_bytes=None,
+            stream=output,
+            clock=clock,
+            update_interval=0.0,
+        )
+
+        progress.update(3 * 1024 * 1024)
+
+        status = output.getvalue()
+        self.assertIn("3.0 MiB", status)
+        self.assertIn("1.5 MiB/s", status)
+        self.assertIn("elapsed 00:02", status)
+        self.assertNotIn("%", status)
+
     def test_parse_microphysics_index_discovers_all_eos_family_pages(self) -> None:
         pages = eos_catalog.parse_eos_family_pages(MICROPHYSICS_HTML)
 
@@ -113,14 +157,20 @@ class EOSCatalogTests(unittest.TestCase):
     def test_parse_catalog_builds_choices_from_hdf5_rows(self) -> None:
         tables = eos_catalog.parse_eos_catalog(CATALOG_HTML)
 
-        self.assertEqual([table.description for table in tables], [
-            "LS EOS, K = 220 MeV",
-            "HS EOS, DD2",
-        ])
-        self.assertEqual([table.family for table in tables], [
-            "Lattimer and Swesty EOS",
-            "Hempel et al. EOS",
-        ])
+        self.assertEqual(
+            [table.description for table in tables],
+            [
+                "LS EOS, K = 220 MeV",
+                "HS EOS, DD2",
+            ],
+        )
+        self.assertEqual(
+            [table.family for table in tables],
+            [
+                "Lattimer and Swesty EOS",
+                "Hempel et al. EOS",
+            ],
+        )
         self.assertEqual(tables[0].filename, "LS220_table.h5.bz2")
         self.assertEqual(
             tables[1].url,
@@ -151,15 +201,23 @@ class EOSCatalogTests(unittest.TestCase):
             default_family="APR EOS",
         )
 
-        self.assertEqual([table.description for table in tables], [
-            "APR pure SNA",
-            "APR with NSE (3335 nuclides)",
-        ])
-        self.assertEqual([table.filename for table in tables], [
-            "APR_0000.h5.tar.bz2",
-            "APR_3335.h5.tar.bz2",
-        ])
-        self.assertEqual(tables[0].url, "https://stockholmuniversity.box.com/s/pure-share")
+        self.assertEqual(
+            [table.description for table in tables],
+            [
+                "APR pure SNA",
+                "APR with NSE (3335 nuclides)",
+            ],
+        )
+        self.assertEqual(
+            [table.filename for table in tables],
+            [
+                "APR_0000.h5.tar.bz2",
+                "APR_3335.h5.tar.bz2",
+            ],
+        )
+        self.assertEqual(
+            tables[0].url, "https://stockholmuniversity.box.com/s/pure-share"
+        )
 
     def test_parse_sro_catalog_pairs_each_description_with_its_link(self) -> None:
         tables = eos_catalog.parse_eos_catalog(
@@ -168,10 +226,13 @@ class EOSCatalogTests(unittest.TestCase):
             default_family="SRO Equation of State",
         )
 
-        self.assertEqual([table.description for table in tables], [
-            "KDE0v1 with NSE (3335 nuclides)",
-            "KDE0v1 pure SNA",
-        ])
+        self.assertEqual(
+            [table.description for table in tables],
+            [
+                "KDE0v1 with NSE (3335 nuclides)",
+                "KDE0v1 pure SNA",
+            ],
+        )
 
     def test_parse_catalog_rejects_downloads_from_other_hosts(self) -> None:
         html = '<tr><td>Bad</td><td><a href="https://example.com/bad.h5.bz2">bad</a></td></tr>'
@@ -194,12 +255,15 @@ class EOSCatalogTests(unittest.TestCase):
         tables = eos_catalog.fetch_eos_catalog(open_url=open_url)
 
         self.assertEqual(len(tables), 6)
-        self.assertEqual({table.family for table in tables}, {
-            "APR EOS",
-            "SRO Equation of State",
-            "Lattimer and Swesty EOS",
-            "Hempel et al. EOS",
-        })
+        self.assertEqual(
+            {table.family for table in tables},
+            {
+                "APR EOS",
+                "SRO Equation of State",
+                "Lattimer and Swesty EOS",
+                "Hempel et al. EOS",
+            },
+        )
 
     def test_fetch_catalog_recursively_discovers_nested_eos_pages(self) -> None:
         index_html = '<a href="parent.html">Parent EOS</a>'
@@ -225,7 +289,9 @@ class EOSCatalogTests(unittest.TestCase):
 
     def test_fetch_catalog_rejects_oversized_html(self) -> None:
         payload = b"x" * (eos_catalog.MAX_CATALOG_BYTES + 1)
-        opener = mock.Mock(return_value=_Response(payload, eos_catalog.MICROPHYSICS_URL))
+        opener = mock.Mock(
+            return_value=_Response(payload, eos_catalog.MICROPHYSICS_URL)
+        )
 
         with self.assertRaisesRegex(OSError, "catalog exceeds"):
             eos_catalog.fetch_eos_catalog(open_url=opener)
@@ -251,6 +317,35 @@ class EOSCatalogTests(unittest.TestCase):
             self.assertEqual(destination.read_bytes(), payload)
             self.assertFalse((Path(temp_dir) / "LS220_table.h5.bz2.part").exists())
             self.assertFalse((Path(temp_dir) / "LS220_table.h5.part").exists())
+
+    def test_download_uses_response_size_for_progress(self) -> None:
+        table = eos_catalog.EOSTable(
+            family="Lattimer and Swesty EOS",
+            description="LS EOS",
+            filename="LS220_table.h5.bz2",
+            url="https://stellarcollapse.org/EOS/LS220_table.h5.bz2",
+        )
+        compressed = bz2.compress(b"an hdf5 payload")
+        opener = mock.Mock(
+            return_value=_Response(
+                compressed,
+                table.url,
+                headers={"Content-Length": str(len(compressed))},
+            )
+        )
+        progress_output = io.StringIO()
+
+        with (
+            tempfile.TemporaryDirectory() as temp_dir,
+            redirect_stderr(progress_output),
+        ):
+            eos_catalog.download_eos_table(
+                table,
+                destination_dir=Path(temp_dir),
+                open_url=opener,
+            )
+
+        self.assertIn("100.0%", progress_output.getvalue())
 
     def test_download_extracts_hdf5_from_tar_bz2_archive(self) -> None:
         table = eos_catalog.EOSTable(

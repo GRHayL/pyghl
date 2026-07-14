@@ -31,7 +31,9 @@ class TrainCLIParserTests(unittest.TestCase):
     def test_explicit_eos_file_skips_stellarcollapse_selection(self) -> None:
         chooser = mock.Mock(side_effect=AssertionError("selector should not run"))
 
-        result = nn_c2p_train.resolve_eos_file(Path("local.h5"), choose_and_download=chooser)
+        result = nn_c2p_train.resolve_eos_file(
+            Path("local.h5"), choose_and_download=chooser
+        )
 
         self.assertEqual(result, Path("local.h5"))
         chooser.assert_not_called()
@@ -39,7 +41,9 @@ class TrainCLIParserTests(unittest.TestCase):
     def test_cancelled_remote_selection_returns_shell_interrupt_status(self) -> None:
         stderr = io.StringIO()
 
-        with mock.patch.object(nn_c2p_train, "resolve_eos_file", side_effect=KeyboardInterrupt):
+        with mock.patch.object(
+            nn_c2p_train, "resolve_eos_file", side_effect=KeyboardInterrupt
+        ):
             with contextlib.redirect_stderr(stderr):
                 status = nn_c2p_train.main([])
 

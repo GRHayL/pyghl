@@ -128,8 +128,9 @@ nested EOS catalog links), then groups all advertised tables by family. The
 terminal selector supports arrow-key navigation, paging, and type-to-filter
 search across family, variant, and filename. The selected bzip2 or tar+bzip2
 HDF5 table is downloaded, decompressed into the current directory, and reused
-on later runs. Standard tables are hundreds of MB compressed; some high-
-resolution SRO tables are 4.3-4.5 GB.
+on later runs. Downloads display transferred size and speed; servers that report
+the file size also get a percentage bar and ETA. Standard tables are hundreds
+of MB compressed; some high-resolution SRO tables are 4.3-4.5 GB.
 
 To use an EOS table already on disk instead:
 

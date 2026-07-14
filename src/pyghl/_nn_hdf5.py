@@ -10,7 +10,6 @@ from typing import Any
 import h5py
 import numpy as np
 
-
 NN_HDF5_FORMAT = "grhayl_nn_c2p_hdf5"
 NN_HDF5_FORMAT_VERSION = 2
 EOS_EMBED_GROUP = "grhayl_nn_c2p"
@@ -176,8 +175,12 @@ def installed_model_summaries() -> list[dict[str, Any]]:
             {
                 "model_path": str(model_path),
                 "model_filename": model_path.name,
-                "canonical_md5": _decode_hdf5_scalar(source_eos.get("canonical_md5", "")),
-                "source_eos_filename": _decode_hdf5_scalar(source_eos.get("filename", "")),
+                "canonical_md5": _decode_hdf5_scalar(
+                    source_eos.get("canonical_md5", "")
+                ),
+                "source_eos_filename": _decode_hdf5_scalar(
+                    source_eos.get("filename", "")
+                ),
                 "hidden_dim": int(payload["dims"]["hidden_dim"]),
                 "n_hidden": int(payload["dims"]["n_hidden"]),
             }
@@ -344,8 +347,12 @@ def append_nn_to_eos_file(
         provenance = dict(eos_metadata)
         provenance["embedded_utc"] = _utc_now_timestamp()
         if source_eos:
-            provenance["source_model_eos_md5"] = _decode_hdf5_scalar(source_eos["canonical_md5"])
-            provenance["source_model_eos_filename"] = _decode_hdf5_scalar(source_eos["filename"])
+            provenance["source_model_eos_md5"] = _decode_hdf5_scalar(
+                source_eos["canonical_md5"]
+            )
+            provenance["source_model_eos_filename"] = _decode_hdf5_scalar(
+                source_eos["filename"]
+            )
         _write_mapping(root.create_group("provenance"), provenance)
     summary = eos_nn_metadata(eos_file)
     summary["overwrite_performed"] = bool(existing_info["contains_nn"])
@@ -361,12 +368,16 @@ def append_matching_installed_nn_to_eos_file(
     if model_path is None:
         eos_md5 = build_eos_metadata(eos_path)["canonical_md5"]
         available = installed_model_summaries()
-        available_md5s = sorted({item["canonical_md5"] for item in available if item["canonical_md5"]})
+        available_md5s = sorted(
+            {item["canonical_md5"] for item in available if item["canonical_md5"]}
+        )
         raise ValueError(
             f"No installed neural-network model matches this EOS; canonical md5 is {eos_md5}. "
             f"Known installed EOS hashes: {available_md5s}"
         )
-    return append_nn_to_eos_file(eos_path, model_path, overwrite=overwrite, require_eos_match=True)
+    return append_nn_to_eos_file(
+        eos_path, model_path, overwrite=overwrite, require_eos_match=True
+    )
 
 
 def remove_nn_from_eos_file(eos_path: str | Path) -> dict[str, Any]:

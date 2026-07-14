@@ -23,8 +23,12 @@ def build_parser(prog: str | None = None) -> argparse.ArgumentParser:
     parser.add_argument("dataset", nargs="?", type=Path)
     parser.add_argument("--checkpoint")
     parser.add_argument("--hdf5_output", type=Path, default=Path("tiny_mlp_model.h5"))
-    parser.add_argument("--bundle_output", type=Path, default=Path("tiny_mlp_inference.pt"))
-    parser.add_argument("--header_output", type=Path, default=Path("tiny_mlp_weights.h"))
+    parser.add_argument(
+        "--bundle_output", type=Path, default=Path("tiny_mlp_inference.pt")
+    )
+    parser.add_argument(
+        "--header_output", type=Path, default=Path("tiny_mlp_weights.h")
+    )
     parser.add_argument("--epochs", type=int, default=2000)
     parser.add_argument("--batch_size", type=int, default=4096)
     parser.add_argument("--patience", type=int, default=250)
@@ -35,7 +39,9 @@ def build_parser(prog: str | None = None) -> argparse.ArgumentParser:
     parser.add_argument("--n_hidden", type=int, default=3)
     parser.add_argument("--append_eos", choices=("yes", "no"), default="yes")
     parser.add_argument("--overwrite_eos", action="store_true")
-    parser.add_argument("--register_installed_model", choices=("yes", "no"), default="yes")
+    parser.add_argument(
+        "--register_installed_model", choices=("yes", "no"), default="yes"
+    )
     parser.add_argument("--overwrite_installed_model", action="store_true")
     parser.add_argument("--force_retrain", action="store_true")
     parser.add_argument("--dataset_n_pts", type=int, default=16)

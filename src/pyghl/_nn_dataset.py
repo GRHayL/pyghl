@@ -5,12 +5,12 @@ from pathlib import Path
 
 import numpy as np
 
-
 HEADER_SIZE_BYTES = 24
 HEADER_FORMAT = "<QQQ"
 SUPPORTED_FLOAT_BITS = (32, 64)
 INPUT_COLUMN_INDICES = (11, 12, 13, 14)
 TARGET_COLUMN_INDICES_X = (15,)
+
 
 def read_training_dataset(
     filename: str | Path,

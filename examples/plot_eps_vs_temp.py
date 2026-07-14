@@ -198,13 +198,13 @@ def rewrite_logenergy_table(
 
         for ir in range(len(rho)):
             if ir == 0:
-                dadrho[:, :, ir] = (free_energy[:, :, ir + 1] - free_energy[:, :, ir]) / (
-                    rho[ir + 1] - rho[ir]
-                )
+                dadrho[:, :, ir] = (
+                    free_energy[:, :, ir + 1] - free_energy[:, :, ir]
+                ) / (rho[ir + 1] - rho[ir])
             elif ir == len(rho) - 1:
-                dadrho[:, :, ir] = (free_energy[:, :, ir] - free_energy[:, :, ir - 1]) / (
-                    rho[ir] - rho[ir - 1]
-                )
+                dadrho[:, :, ir] = (
+                    free_energy[:, :, ir] - free_energy[:, :, ir - 1]
+                ) / (rho[ir] - rho[ir - 1])
             else:
                 dadrho[:, :, ir] = (
                     free_energy[:, :, ir + 1] - free_energy[:, :, ir - 1]
@@ -212,8 +212,10 @@ def rewrite_logenergy_table(
 
         reconstructed_pressure = rho[None, None, :] ** 2 * dadrho
         changed_mask_all = np.abs(updated - logenergy) > 1e-14
-        valid_pressure_mask = changed_mask_all & np.isfinite(reconstructed_pressure) & (
-            reconstructed_pressure > 0.0
+        valid_pressure_mask = (
+            changed_mask_all
+            & np.isfinite(reconstructed_pressure)
+            & (reconstructed_pressure > 0.0)
         )
         if np.any(valid_pressure_mask):
             updated_logpress[valid_pressure_mask] = np.log10(
@@ -271,10 +273,12 @@ def main() -> None:
 
     if args.output_table is not None:
         if len(args.eos_files) != 1:
-            raise ValueError("--output-table currently supports exactly one input EOS file")
+            raise ValueError(
+                "--output-table currently supports exactly one input EOS file"
+            )
         changed_slices, total_slices, changed_points, pressure_updated_points = (
             rewrite_logenergy_table(
-            Path(args.eos_files[0]), args.output_table, args.connector_slope
+                Path(args.eos_files[0]), args.output_table, args.connector_slope
             )
         )
         print(
@@ -315,7 +319,9 @@ def main() -> None:
                 iy, ir = args.ye_index, args.rho_index
 
             if not (0 <= iy < len(ye)):
-                raise IndexError(f"{path}: ye index {iy} is out of range [0, {len(ye) - 1}]")
+                raise IndexError(
+                    f"{path}: ye index {iy} is out of range [0, {len(ye) - 1}]"
+                )
             if not (0 <= ir < len(logrho)):
                 raise IndexError(
                     f"{path}: rho index {ir} is out of range [0, {len(logrho) - 1}]"
@@ -408,21 +414,28 @@ def main() -> None:
                             derivative_ax.set_ylabel("slope", color="tab:blue")
                             derivative_ax.tick_params(axis="y", colors="tab:blue")
                             delta_ax.axhline(0.0, color="0.5", linewidth=1.0, alpha=0.7)
-                            derivative_ax.axhline(0.0, color="tab:blue", linewidth=1.0, alpha=0.25)
+                            derivative_ax.axhline(
+                                0.0, color="tab:blue", linewidth=1.0, alpha=0.25
+                            )
                             delta_ax.axvline(
                                 connector_info["x_match"],
                                 color="0.7",
                                 linewidth=1.0,
                                 alpha=0.8,
                             )
-                            derivative_handles = [table_slope_line, connector_slope_line]
+                            derivative_handles = [
+                                table_slope_line,
+                                connector_slope_line,
+                            ]
                     print(
                         f"{path}: connector slope={args.connector_slope:.3e}, "
                         f"match at log10(T)={connector_info['x_match']:.6g}, "
                         f"table slope at match={connector_info['table_slope_at_match']:.6g}"
                     )
                 else:
-                    print(f"{path}: connector skipped because no transition was detected")
+                    print(
+                        f"{path}: connector skipped because no transition was detected"
+                    )
 
             print(
                 f"{path}: using Ye index {iy} (Ye={ye[iy]:.6g}), "
@@ -443,7 +456,9 @@ def main() -> None:
             delta_ax.tick_params(axis="y", colors="tab:red")
             delta_ax.grid(True, alpha=0.3)
             if delta_handles:
-                delta_ax.legend(handles=delta_handles + derivative_handles, loc="upper left")
+                delta_ax.legend(
+                    handles=delta_handles + derivative_handles, loc="upper left"
+                )
 
     ax.legend()
     ax.grid(True, alpha=0.3)
