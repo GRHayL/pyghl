@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import os
+from pathlib import Path
+
 _BINDINGS_IMPORT_ERROR: ImportError | None = None
 _BINDINGS_AVAILABLE = False
 
@@ -53,10 +56,40 @@ from . import nn
 def require_bindings() -> None:
     """Raise the original extension import error if C bindings are unavailable."""
     if _BINDINGS_IMPORT_ERROR is not None:
-        raise ImportError(
-            "GRHayL C bindings are unavailable. Rebuild/reinstall the Python "
-            "package or fix LD_LIBRARY_PATH."
-        ) from _BINDINGS_IMPORT_ERROR
+        original_error = str(_BINDINGS_IMPORT_ERROR)
+        message = (
+            "GRHayL C bindings could not be loaded. "
+            f"Original loader error: {original_error}"
+        )
+
+        if "libghl" in original_error:
+            grhayl_root = os.environ.get("GRHAYL_DIR")
+            if grhayl_root:
+                library_dir = Path(grhayl_root).expanduser().resolve() / "build" / "lib"
+            else:
+                checkout_library_dir = (
+                    Path(__file__).resolve().parents[2]
+                    / "extern"
+                    / "GRHayL"
+                    / "build"
+                    / "lib"
+                )
+                library_dir = (
+                    checkout_library_dir
+                    if checkout_library_dir.is_dir()
+                    else Path("<GRHayL-checkout>") / "build" / "lib"
+                )
+            message += (
+                "\nFor a local or editable pyghl installation, build GRHayL and "
+                "make its shared library visible before running pyghl, for example:"
+                f"\n  export LD_LIBRARY_PATH={library_dir}:$LD_LIBRARY_PATH"
+                "\nFor a regular installation, rebuild or reinstall pyghl so that "
+                "libghl is packaged beside the extension module."
+            )
+        else:
+            message += "\nRebuild or reinstall pyghl and inspect the loader error above."
+
+        raise ImportError(message) from _BINDINGS_IMPORT_ERROR
 
 
 __all__ = [

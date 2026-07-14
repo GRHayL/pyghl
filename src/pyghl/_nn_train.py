@@ -564,7 +564,7 @@ def train_regressor(
     n_out: Optional[int] = None,
     target_mode: str = "x_correction",
     hidden_dim: int = 3,
-    n_hidden: int = 2,
+    n_hidden: int = 3,
     lr: float = 5e-4,
     epochs: int = 2000,
     batch_size: int = 4096,
@@ -1387,7 +1387,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--checkpoint_every", type=int, default=200)
     parser.add_argument("--checkpoint_prefix", default="tiny_mlp")
     parser.add_argument("--hidden_dim", type=int, default=3)
-    parser.add_argument("--n_hidden", type=int, default=2)
+    parser.add_argument("--n_hidden", type=int, default=3)
     parser.add_argument("--learning_rate", type=float, default=5e-4)
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--append_eos", choices=("yes", "no"), default="yes")

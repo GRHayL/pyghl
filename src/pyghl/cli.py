@@ -77,6 +77,12 @@ def main(argv: Sequence[str] | None = None) -> int:
     command_args = argv[1:]
 
     if command == "train":
+        from . import require_bindings
+
+        try:
+            require_bindings()
+        except ImportError as exc:
+            parser.exit(1, f"pyghl train: error: {exc}\n")
         from .nn_c2p.nn_c2p_train import main as train_main
 
         return train_main(command_args, prog="pyghl train")

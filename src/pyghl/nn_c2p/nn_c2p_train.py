@@ -32,7 +32,7 @@ def build_parser(prog: str | None = None) -> argparse.ArgumentParser:
     parser.add_argument("--checkpoint_dir", default="checkpoints")
     parser.add_argument("--checkpoint_every", type=int, default=200)
     parser.add_argument("--hidden_dim", type=int, default=3)
-    parser.add_argument("--n_hidden", type=int, default=2)
+    parser.add_argument("--n_hidden", type=int, default=3)
     parser.add_argument("--append_eos", choices=("yes", "no"), default="yes")
     parser.add_argument("--overwrite_eos", action="store_true")
     parser.add_argument("--register_installed_model", choices=("yes", "no"), default="yes")
