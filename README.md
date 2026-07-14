@@ -124,10 +124,16 @@ pyghl train
 ```
 
 The command discovers EOS-family catalog pages from that index (including
-nested EOS catalog links), then groups all advertised tables by family. The
-terminal selector supports arrow-key navigation, paging, and type-to-filter
-search across family, variant, and filename. The selected bzip2 or tar+bzip2
-HDF5 table is downloaded, decompressed into the current directory, and reused
+nested EOS catalog links). It first presents the category/paper names used by
+the StellarCollapse microphysics page, then opens a searchable list of the
+specific tables in the selected category. Table search supports arrow-key
+navigation, paging, and type-to-filter matching across family, variant, and
+filename.
+
+APR tables remain advertised by StellarCollapse, but their Stockholm University
+Box downloads currently return HTTP 404. The category and table screens mark
+these entries unavailable before selection. Other selected bzip2 or tar+bzip2
+HDF5 tables are downloaded, decompressed into the current directory, and reused
 on later runs. Downloads display transferred size and speed; servers that report
 the file size also get a percentage bar and ETA. Standard tables are hundreds
 of MB compressed; some high-resolution SRO tables are 4.3-4.5 GB.

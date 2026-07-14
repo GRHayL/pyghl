@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import bz2
 from contextlib import redirect_stderr
+import curses
 import io
 import tempfile
 import tarfile
@@ -30,9 +31,9 @@ CATALOG_HTML = """
 
 MICROPHYSICS_HTML = """
 <main>
-  <a href="APREOS.html">APR EOS</a>
-  <a href="SROEOS.html">SRO Equation of State</a>
-  <a href="equationofstate.html">O'Connor &amp; Ott EOS Tables</a>
+  <a href="APREOS.html">APR Equation of State (Schneider, Constantinou, Muccioli, Prakash 2019)</a>
+  <a href="SROEOS.html">SRO Equation of State (Schneider, Roberts, Ott 2017)</a>
+  <a href="equationofstate.html">Equations of State (O'Connor &amp; Ott 2010 Tables)</a>
   <a href="APREOS.html">APR EOS duplicate navigation link</a>
   <a href="nulib.html">NuLib</a>
 </main>
@@ -77,6 +78,7 @@ class _Response(io.BytesIO):
 class _PickerScreen:
     def __init__(self, keys: list[int]):
         self.keys = iter(keys)
+        self.drawn_text: list[str] = []
 
     def keypad(self, enabled: bool) -> None:
         pass
@@ -91,7 +93,7 @@ class _PickerScreen:
         pass
 
     def addstr(self, *args) -> None:
-        pass
+        self.drawn_text.append(str(args[2]))
 
     def refresh(self) -> None:
         pass
@@ -145,10 +147,16 @@ class EOSCatalogTests(unittest.TestCase):
         self.assertEqual(
             [(page.family, page.url) for page in pages],
             [
-                ("APR EOS", "https://stellarcollapse.org/APREOS.html"),
-                ("SRO Equation of State", "https://stellarcollapse.org/SROEOS.html"),
                 (
-                    "O'Connor & Ott EOS Tables",
+                    "APR Equation of State (Schneider, Constantinou, Muccioli, Prakash 2019)",
+                    "https://stellarcollapse.org/APREOS.html",
+                ),
+                (
+                    "SRO Equation of State (Schneider, Roberts, Ott 2017)",
+                    "https://stellarcollapse.org/SROEOS.html",
+                ),
+                (
+                    "Equations of State (O'Connor & Ott 2010 Tables)",
                     "https://stellarcollapse.org/equationofstate.html",
                 ),
             ],
@@ -258,10 +266,18 @@ class EOSCatalogTests(unittest.TestCase):
         self.assertEqual(
             {table.family for table in tables},
             {
-                "APR EOS",
-                "SRO Equation of State",
+                "APR Equation of State (Schneider, Constantinou, Muccioli, Prakash 2019)",
+                "SRO Equation of State (Schneider, Roberts, Ott 2017)",
                 "Lattimer and Swesty EOS",
                 "Hempel et al. EOS",
+            },
+        )
+        self.assertEqual(
+            {table.category for table in tables},
+            {
+                "APR Equation of State (Schneider, Constantinou, Muccioli, Prakash 2019)",
+                "SRO Equation of State (Schneider, Roberts, Ott 2017)",
+                "Equations of State (O'Connor & Ott 2010 Tables)",
             },
         )
 
@@ -286,6 +302,7 @@ class EOSCatalogTests(unittest.TestCase):
 
         self.assertEqual(len(tables), 1)
         self.assertEqual(tables[0].family, "Additional EOS tables")
+        self.assertEqual(tables[0].category, "Parent EOS")
 
     def test_fetch_catalog_rejects_oversized_html(self) -> None:
         payload = b"x" * (eos_catalog.MAX_CATALOG_BYTES + 1)
@@ -447,19 +464,60 @@ class EOSCatalogTests(unittest.TestCase):
                 description="S variant",
                 filename="S.h5.bz2",
                 url="https://stellarcollapse.org/EOS/S.h5.bz2",
+                category="SRO Equation of State (Schneider, Roberts, Ott 2017)",
             ),
             eos_catalog.EOSTable(
                 family="SRO EOS",
                 description="SkT1 variant",
                 filename="SkT1.h5.bz2",
                 url="https://stellarcollapse.org/EOS/SkT1.h5.bz2",
+                category="SRO Equation of State (Schneider, Roberts, Ott 2017)",
             ),
         ]
-        screen = _PickerScreen([ord("S"), ord("k"), 10])
+        screen = _PickerScreen([10, ord("S"), ord("k"), 10])
 
         selected = eos_catalog._run_eos_picker(screen, tables)
 
         self.assertEqual(selected.description, "SkT1 variant")
+
+    def test_picker_selects_category_before_specific_table(self) -> None:
+        tables = [
+            eos_catalog.EOSTable(
+                family="APR EOS",
+                description="APR pure SNA",
+                filename="APR.h5.tar.bz2",
+                url="https://stockholmuniversity.box.com/s/apr",
+                category="APR Equation of State (Schneider, Constantinou, Muccioli, Prakash 2019)",
+            ),
+            eos_catalog.EOSTable(
+                family="SRO EOS",
+                description="SkT1 pure SNA",
+                filename="SkT1.h5.bz2",
+                url="https://stellarcollapse.org/EOS/SkT1.h5.bz2",
+                category="SRO Equation of State (Schneider, Roberts, Ott 2017)",
+            ),
+        ]
+        screen = _PickerScreen([curses.KEY_DOWN, 10, 10])
+
+        selected = eos_catalog._run_eos_picker(screen, tables)
+
+        self.assertEqual(selected.description, "SkT1 pure SNA")
+
+    def test_picker_warns_that_stockholm_downloads_are_unavailable(self) -> None:
+        table = eos_catalog.EOSTable(
+            family="APR EOS",
+            description="APR pure SNA",
+            filename="APR.h5.tar.bz2",
+            url="https://stockholmuniversity.box.com/s/apr",
+            category="APR Equation of State (Schneider, Constantinou, Muccioli, Prakash 2019)",
+        )
+        screen = _PickerScreen([10, 10])
+
+        eos_catalog._run_eos_picker(screen, [table])
+
+        rendered = " ".join(screen.drawn_text)
+        self.assertIn("WARNING", rendered)
+        self.assertIn("unavailable", rendered)
 
     def test_choose_and_download_fetches_selects_then_downloads(self) -> None:
         table = eos_catalog.EOSTable(

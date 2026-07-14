@@ -3,7 +3,7 @@ from __future__ import annotations
 import bz2
 from collections import deque
 import curses
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from html.parser import HTMLParser
 from pathlib import Path
 import re
@@ -33,6 +33,17 @@ PROGRESS_BAR_WIDTH = 24
 PROGRESS_UPDATE_SECONDS = 0.2
 LOG_PROGRESS_UPDATE_SECONDS = 5.0
 _EOS_FILENAME = re.compile(r"[A-Za-z0-9._+-]+\.h5(?:\.tar)?\.bz2\Z")
+_EOS_PAGE_TEXT = re.compile(r"\b(?:eos|equations? of state)\b", re.IGNORECASE)
+EOS_CATEGORY_NAMES = {
+    "APREOS": "APR Equation of State (Schneider, Constantinou, Muccioli, Prakash 2019)",
+    "SROEOS": "SRO Equation of State (Schneider, Roberts, Ott 2017)",
+    "equationofstate": "Equations of State (O'Connor & Ott 2010 Tables)",
+}
+STOCKHOLM_DOWNLOAD_HOSTS = {
+    "stockholmuniversity.app.box.com",
+    "stockholmuniversity.box.com",
+}
+STOCKHOLM_UNAVAILABLE_WARNING = "WARNING: Stockholm University downloads are currently unavailable (upstream HTTP 404)."
 
 
 def _is_allowed_download_host(hostname: str | None) -> bool:
@@ -66,12 +77,14 @@ class EOSTable:
     description: str
     filename: str
     url: str
+    category: str = ""
 
 
 @dataclass(frozen=True)
 class EOSCatalogPage:
     family: str
     url: str
+    category: str = ""
 
 
 def _normalize_text(parts: Iterable[str]) -> str:
@@ -148,10 +161,7 @@ def parse_eos_family_pages(
     pages: list[EOSCatalogPage] = []
     seen: set[str] = set()
     for href, text, title in parser.links:
-        if (
-            "eos" not in f"{text} {title}".lower()
-            and "equation of state" not in text.lower()
-        ):
+        if not _EOS_PAGE_TEXT.search(f"{text} {title}"):
             continue
         url = urldefrag(urljoin(base_url, href)).url
         parsed = urlparse(url)
@@ -165,7 +175,8 @@ def parse_eos_family_pages(
         ):
             continue
         seen.add(url)
-        pages.append(EOSCatalogPage(family=text or title, url=url))
+        family = EOS_CATEGORY_NAMES.get(Path(parsed.path).stem, text or title)
+        pages.append(EOSCatalogPage(family=family, url=url))
     return pages
 
 
@@ -308,7 +319,7 @@ def fetch_eos_catalog(
 
     tables: list[EOSTable] = []
     seen: set[tuple[str, str]] = set()
-    page_queue = deque(pages)
+    page_queue = deque(replace(page, category=page.family) for page in pages)
     queued_urls = {page.url for page in pages}
     visited_pages = 0
     while page_queue:
@@ -324,6 +335,7 @@ def fetch_eos_catalog(
             base_url=page.url,
             default_family=page.family,
         ):
+            table = replace(table, category=page.category)
             key = (table.filename, table.url)
             if key not in seen:
                 seen.add(key)
@@ -331,7 +343,7 @@ def fetch_eos_catalog(
         for discovered in parse_eos_family_pages(html, base_url=page.url):
             if discovered.url not in queued_urls:
                 queued_urls.add(discovered.url)
-                page_queue.append(discovered)
+                page_queue.append(replace(discovered, category=page.category))
     if not tables:
         raise RuntimeError(f"No EOS tables found from {MICROPHYSICS_URL}")
     return tables
@@ -576,6 +588,20 @@ def choice_matches(table: EOSTable, query: str) -> bool:
     return all(term in haystack for term in terms)
 
 
+def _table_category(table: EOSTable) -> str:
+    return table.category or table.family
+
+
+def _uses_unavailable_stockholm_download(table: EOSTable) -> bool:
+    return urlparse(table.url).hostname in STOCKHOLM_DOWNLOAD_HOSTS
+
+
+def _category_warning(tables: list[EOSTable]) -> str:
+    if any(_uses_unavailable_stockholm_download(table) for table in tables):
+        return STOCKHOLM_UNAVAILABLE_WARNING
+    return ""
+
+
 def _add_clipped(
     screen, row: int, column: int, text: str, width: int, attrs: int = 0
 ) -> None:
@@ -588,15 +614,87 @@ def _add_clipped(
         pass
 
 
-def _run_eos_picker(screen, tables: list[EOSTable]) -> EOSTable:
-    try:
-        curses.curs_set(0)
-    except curses.error:
-        pass
-    screen.keypad(True)
+def _run_category_picker(screen, tables: list[EOSTable]) -> str:
+    categories = list(dict.fromkeys(_table_category(table) for table in tables))
+    selected = 0
+
+    while True:
+        rows, columns = screen.getmaxyx()
+        screen.erase()
+
+        if rows < 10 or columns < 72:
+            _add_clipped(
+                screen, 0, 0, "Terminal too small; resize to at least 72x10.", columns
+            )
+            screen.refresh()
+            if screen.getch() in (3, 27):
+                raise KeyboardInterrupt
+            continue
+
+        screen.border()
+        _add_clipped(
+            screen, 0, 2, " StellarCollapse EOS categories ", columns - 4, curses.A_BOLD
+        )
+        _add_clipped(
+            screen,
+            1,
+            2,
+            "Select category/paper  Arrows move  Enter opens  Esc cancels",
+            columns - 4,
+            curses.A_DIM,
+        )
+        for row, category in enumerate(categories, start=3):
+            category_tables = [
+                table for table in tables if _table_category(table) == category
+            ]
+            warning = (
+                "  [downloads unavailable]"
+                if _category_warning(category_tables)
+                else ""
+            )
+            marker = ">" if row - 3 == selected else " "
+            text = f"{marker} {category} ({len(category_tables)} tables){warning}"
+            attrs = curses.A_REVERSE | curses.A_BOLD if row - 3 == selected else 0
+            _add_clipped(screen, row, 2, text, columns - 4, attrs)
+
+        selected_tables = [
+            table for table in tables if _table_category(table) == categories[selected]
+        ]
+        warning = _category_warning(selected_tables)
+        _add_clipped(
+            screen,
+            rows - 2,
+            2,
+            warning or "Enter opens selected category.",
+            columns - 4,
+            curses.A_BOLD if warning else curses.A_DIM,
+        )
+        screen.refresh()
+
+        key = screen.getch()
+        if key in (3, 27):
+            raise KeyboardInterrupt
+        if key == curses.KEY_UP:
+            selected = max(0, selected - 1)
+        elif key == curses.KEY_DOWN:
+            selected = min(len(categories) - 1, selected + 1)
+        elif key == curses.KEY_HOME:
+            selected = 0
+        elif key == curses.KEY_END:
+            selected = len(categories) - 1
+        elif key in (10, 13, curses.KEY_ENTER):
+            return categories[selected]
+
+
+def _run_table_picker(
+    screen,
+    tables: list[EOSTable],
+    category: str,
+) -> EOSTable:
     selected = 0
     top = 0
     query = ""
+    warning = _category_warning(tables)
 
     while True:
         visible = [table for table in tables if choice_matches(table, query)]
@@ -614,9 +712,7 @@ def _run_eos_picker(screen, tables: list[EOSTable]) -> EOSTable:
             continue
 
         screen.border()
-        _add_clipped(
-            screen, 0, 2, " StellarCollapse EOS tables ", columns - 4, curses.A_BOLD
-        )
+        _add_clipped(screen, 0, 2, f" {category} ", columns - 4, curses.A_BOLD)
         _add_clipped(
             screen,
             1,
@@ -629,8 +725,8 @@ def _run_eos_picker(screen, tables: list[EOSTable]) -> EOSTable:
             screen, 2, 2, f"Filter: {query or '[all]'}", columns - 4, curses.A_BOLD
         )
 
-        list_top = 4
-        list_height = max(1, rows - 7)
+        list_top = 5 if warning else 4
+        list_height = max(1, rows - list_top - 3)
         if selected < top:
             top = selected
         if selected >= top + list_height:
@@ -639,12 +735,14 @@ def _run_eos_picker(screen, tables: list[EOSTable]) -> EOSTable:
         end = min(len(visible), top + list_height)
         _add_clipped(
             screen,
-            3,
+            list_top - 1,
             2,
             f"Showing {top + 1 if visible else 0}-{end} of {len(visible)}",
             columns - 4,
             curses.A_DIM,
         )
+        if warning:
+            _add_clipped(screen, 3, 2, warning, columns - 4, curses.A_BOLD)
 
         if not visible:
             _add_clipped(
@@ -656,7 +754,12 @@ def _run_eos_picker(screen, tables: list[EOSTable]) -> EOSTable:
             for row, table in enumerate(visible[top:end], start=list_top):
                 index = top + row - list_top
                 marker = ">" if index == selected else " "
-                detail = f"{table.family} | {table.filename}"
+                unavailable = (
+                    " | UPSTREAM 404"
+                    if _uses_unavailable_stockholm_download(table)
+                    else ""
+                )
+                detail = f"{table.family} | {table.filename}{unavailable}"
                 text = f"{marker} {table.description[:label_width].ljust(label_width)}  {detail}"
                 attrs = curses.A_REVERSE | curses.A_BOLD if index == selected else 0
                 _add_clipped(screen, row, 2, text, row_width, attrs)
@@ -703,6 +806,17 @@ def _run_eos_picker(screen, tables: list[EOSTable]) -> EOSTable:
         elif 32 <= key <= 126:
             query += chr(key)
             selected = top = 0
+
+
+def _run_eos_picker(screen, tables: list[EOSTable]) -> EOSTable:
+    try:
+        curses.curs_set(0)
+    except curses.error:
+        pass
+    screen.keypad(True)
+    category = _run_category_picker(screen, tables)
+    category_tables = [table for table in tables if _table_category(table) == category]
+    return _run_table_picker(screen, category_tables, category)
 
 
 def select_eos_table(tables: list[EOSTable]) -> EOSTable:
