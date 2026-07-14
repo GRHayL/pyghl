@@ -2,23 +2,24 @@ from __future__ import annotations
 
 import argparse
 import os
+import sys
 import tempfile
 from pathlib import Path
+from typing import Callable
 
 import pyghl as ghl
 
-from pyghl._nn_hdf5 import (
-    append_nn_to_eos_file,
-    eos_nn_metadata,
-    find_matching_installed_nn_model,
-)
-
-from .nn_c2p_generate_dataset import generate_dataset
+from .eos_catalog import choose_and_download_eos
 
 
 def build_parser(prog: str | None = None) -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog=prog)
-    parser.add_argument("eos_file", type=Path)
+    parser.add_argument(
+        "eos_file",
+        nargs="?",
+        type=Path,
+        help="Local EOS HDF5 file. Omit to select and download one from stellarcollapse.org.",
+    )
     parser.add_argument("dataset", nargs="?", type=Path)
     parser.add_argument("--checkpoint")
     parser.add_argument("--hdf5_output", type=Path, default=Path("tiny_mlp_model.h5"))
@@ -47,8 +48,35 @@ def build_parser(prog: str | None = None) -> argparse.ArgumentParser:
     return parser
 
 
+def resolve_eos_file(
+    eos_file: Path | None,
+    *,
+    choose_and_download: Callable[[], Path] = choose_and_download_eos,
+) -> Path:
+    if eos_file is not None:
+        return eos_file
+    return choose_and_download()
+
+
 def main(argv: list[str] | None = None, prog: str | None = None) -> int:
     args = build_parser(prog=prog).parse_args(argv)
+    try:
+        args.eos_file = resolve_eos_file(args.eos_file)
+    except KeyboardInterrupt:
+        print("\nEOS table selection cancelled.", file=sys.stderr)
+        return 130
+    except (OSError, RuntimeError, ValueError) as exc:
+        print(f"Error selecting EOS table: {exc}", file=sys.stderr)
+        return 1
+
+    from pyghl._nn_hdf5 import (
+        append_nn_to_eos_file,
+        eos_nn_metadata,
+        find_matching_installed_nn_model,
+    )
+
+    from .nn_c2p_generate_dataset import generate_dataset
+
     append_to_eos = args.append_eos == "yes"
     register_installed_model = args.register_installed_model == "yes"
     if not args.force_retrain:

@@ -85,6 +85,23 @@ EOS tables.
 
 ### 2. Train if the EOS is unknown
 
+Run training without an EOS path to choose from the tables published through
+the [StellarCollapse microphysics index](https://stellarcollapse.org/microphysics.html):
+
+```bash
+pyghl train
+```
+
+The command discovers EOS-family catalog pages from that index (including
+nested EOS catalog links), then groups all advertised tables by family. The
+terminal selector supports arrow-key navigation, paging, and type-to-filter
+search across family, variant, and filename. The selected bzip2 or tar+bzip2
+HDF5 table is downloaded, decompressed into the current directory, and reused
+on later runs. Standard tables are hundreds of MB compressed; some high-
+resolution SRO tables are 4.3-4.5 GB.
+
+To use an EOS table already on disk instead:
+
 ```bash
 pyghl train path/to/eos_table.h5
 ```
@@ -161,7 +178,7 @@ print(pressure)
 Primary commands:
 
 ```bash
-pyghl train <eos-file> [dataset]
+pyghl train [<eos-file>] [dataset]
 pyghl append <eos-file> [nn-hdf5]
 pyghl check-eos <eos-file>
 pyghl list-models
