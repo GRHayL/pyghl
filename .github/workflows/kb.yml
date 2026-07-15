@@ -1,0 +1,39 @@
+name: Knowledge base
+
+on:
+  pull_request:
+    paths:
+      - AGENTS.md
+      - wiki/**
+      - scripts/check_kb.py
+      - tests/test_kb_checks.py
+      - .github/workflows/kb.yml
+  push:
+    paths:
+      - AGENTS.md
+      - wiki/**
+      - scripts/check_kb.py
+      - tests/test_kb_checks.py
+      - .github/workflows/kb.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    name: Structural checks
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      PYTHONDONTWRITEBYTECODE: "1"
+    steps:
+      - name: Checkout parent pin and nested objects
+        uses: actions/checkout@v6
+        with:
+          submodules: recursive
+          persist-credentials: false
+      - name: Run checker regression tests
+        run: python -m unittest tests.test_kb_checks -v
+      - name: Check current knowledge-base graph
+        run: python scripts/check_kb.py
